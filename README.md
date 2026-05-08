@@ -1,16 +1,99 @@
-# React + Vite
+# Iskaashi Management System
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A private internal platform for **Iskaashi Educational Development Organisation** to manage its annual orphan student sponsorship programme — tracking donors, payments, student disbursements, and generating financial reports.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Prerequisites
 
-## React Compiler
+Make sure the following are installed on your machine before you begin:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Tool | Minimum Version | Download |
+|------|----------------|---------|
+| Node.js | v18 or higher | https://nodejs.org |
+| npm | v9 or higher | comes with Node.js |
+| Git | any recent version | https://git-scm.com |
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Step 1 — Clone the repository
+
+```bash
+git clone https://github.com/myuusuf2023/iskaashi-system.git
+```
+
+---
+
+## Step 2 — Navigate into the project folder
+
+```bash
+cd iskaashi-system
+```
+
+---
+
+## Step 3 — Install dependencies
+
+```bash
+npm install
+```
+
+This will install all required packages (React, Vite, Tailwind CSS, Recharts, etc.). It may take a minute.
+
+---
+
+## Step 4 — Start the development server
+
+```bash
+npm run dev
+```
+
+Once running, open your browser and go to:
+
+```
+http://localhost:5173
+```
+
+---
+
+## Step 5 — Log in
+
+Use one of the built-in accounts:
+
+| Role | Username | Password |
+|------|----------|----------|
+| Super Admin | `superadmin` | `super123` |
+| Admin | `admin` | `admin123` |
+| Viewer | `viewer` | `viewer123` |
+
+---
+
+## Available Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start local development server |
+| `npm run build` | Build for production |
+| `npm run preview` | Preview the production build locally |
+
+---
+
+## Tech Stack
+
+- **React 19** — UI framework
+- **Vite** — build tool and dev server
+- **Tailwind CSS** — styling
+- **Recharts** — charts and analytics
+- **Lucide React** — icons
+- **xlsx** — Excel file import
+- **html2canvas** — student ID card export
+
+---
+
+## Data Storage
+
+All data (donors, payments, students) is stored in **browser localStorage** — no backend or database required. Data persists across page refreshes on the same browser.
+
+---
+
+*Iskaashi Educational Development Organisation — Internal Use Only*
