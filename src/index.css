@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f4f8; }
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
+@media print {
+  /* Hide sidebar and header */
+  aside { display: none !important; }
+  header { display: none !important; }
+
+  /* Fix layout for print */
+  body { background: white !important; }
+  .flex.h-screen { display: block !important; height: auto !important; }
+  main { overflow: visible !important; height: auto !important; }
+  .flex-1.flex.flex-col { display: block !important; }
+
+  /* Make overflow-x containers fully visible */
+  .overflow-x-auto,
+  .overflow-y-auto,
+  .overflow-hidden { overflow: visible !important; }
+
+  /* Show desktop table, hide mobile cards */
+  .md\:hidden { display: none !important; }
+  .hidden.md\:block { display: block !important; }
+
+  /* Hide interactive controls (toolbar buttons, search) */
+  .no-print { display: none !important; }
+
+  /* Avoid breaking cards/tables across pages */
+  .bg-white.rounded-2xl { break-inside: avoid; margin-bottom: 16px; }
+
+  /* Remove shadows for cleaner print */
+  * { box-shadow: none !important; }
+}
