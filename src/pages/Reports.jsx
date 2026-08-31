@@ -304,6 +304,20 @@ export default function Reports() {
   const partial   = filtered.filter(d => d.paid > 0 && d.paid < d.committed).length;
   const unpaid    = filtered.filter(d => d.paid === 0).length;
 
+  // Committed / Collected split by charity type (Education Fund, Ramadan, Ciidsiinta Agoonta, Other)
+  // — kept separate so one fund's money is never counted toward another's totals.
+  const typeBreakdown = Object.keys(PAYMENT_TYPES).map(type => {
+    const typeDonors   = filtered.filter(d => (d.type || "EDUCATION") === type);
+    const typePayments = filteredPayments.filter(p => (p.type || "EDUCATION") === type);
+    const committed = typeDonors.reduce((s, d) => s + d.committed, 0);
+    const collected = typePayments.reduce((s, p) => s + p.amount, 0);
+    return {
+      type, name: PAYMENT_TYPES[type],
+      donors: typeDonors.length, committed, collected,
+      balance: Math.max(0, committed - collected),
+    };
+  });
+
   const byLocation = Object.entries(
     filtered.reduce((acc, d) => {
       const label = LOCATIONS[d.location] || d.location || "Unknown";
@@ -489,6 +503,26 @@ export default function Reports() {
     <span class="chip unpaid">○ ${unpaidN} Pending</span>
   </div>
 
+  <!-- By Charity -->
+  <div class="table-wrap">
+    <p class="section-title">Committed &amp; Collected by Charity</p>
+    <table style="margin-bottom:4px">
+      <thead>
+        <tr><th>Charity</th><th>Donors</th><th style="text-align:right">Committed</th><th style="text-align:right">Collected</th><th style="text-align:right">Balance</th></tr>
+      </thead>
+      <tbody>
+        ${typeBreakdown.map(t => `
+          <tr>
+            <td style="padding:8px 10px;font-weight:700;color:#1e293b;font-size:11px">${t.name}</td>
+            <td style="padding:8px 10px;font-size:11px;color:#475569">${t.donors}</td>
+            <td style="padding:8px 10px;font-size:12px;text-align:right;font-weight:600;color:#1e293b">$${t.committed.toLocaleString()}</td>
+            <td style="padding:8px 10px;font-size:12px;text-align:right;font-weight:700;color:#059669">$${t.collected.toLocaleString()}</td>
+            <td style="padding:8px 10px;font-size:12px;text-align:right;font-weight:600;color:${t.balance>0?"#e11d48":"#94a3b8"}">$${t.balance.toLocaleString()}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
+  </div>
+
   <!-- Table -->
   <div class="table-wrap">
     <p class="section-title">Donor Directory</p>
@@ -546,11 +580,11 @@ export default function Reports() {
     win.document.close();
   }
 
-  function exportFinancialReport() {
-    const allDonors   = getDonors();
-    const allPayments = getPayments();
-    const allOrphans  = getOrphans();
-    const budget      = getBudgetSummary();
+  async function exportFinancialReport() {
+    const allDonors   = await getDonors();
+    const allPayments = await getPayments();
+    const allOrphans  = await getOrphans();
+    const budget      = await getBudgetSummary();
     const now         = new Date();
     const yr          = now.getFullYear();
     const dateStr     = now.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
@@ -572,9 +606,18 @@ export default function Reports() {
     const partial    = yrDonors.filter(d => d.paid > 0 && d.paid < d.committed);
     const pending    = yrDonors.filter(d => d.paid === 0);
 
-    // ── Budget metrics ──
-    const { needed, disbursed, remaining, paidCount } = budget;
-    const budgetPct  = needed > 0 ? Math.min(100, (collected / needed) * 100).toFixed(1) : "0.0";
+    // Committed / Collected split by charity — each fund's money stays separate
+    const typeBreakdownYr = Object.keys(PAYMENT_TYPES).map(type => {
+      const tDonors   = yrDonors.filter(d => (d.type || "EDUCATION") === type);
+      const tPayments = yrPayments.filter(p => (p.type || "EDUCATION") === type);
+      const tCommitted = tDonors.reduce((s, d) => s + d.committed, 0);
+      const tCollected = tPayments.reduce((s, p) => s + p.amount, 0);
+      return { type, name: PAYMENT_TYPES[type], donors: tDonors.length, committed: tCommitted, collected: tCollected, balance: Math.max(0, tCommitted - tCollected) };
+    });
+
+    // ── Budget metrics ── (Education Fund only — matches the backend's own scoping)
+    const { needed, disbursed, remaining, paidCount, total: eduCollected } = budget;
+    const budgetPct  = needed > 0 ? Math.min(100, (eduCollected / needed) * 100).toFixed(1) : "0.0";
 
     // ── Monthly trend (cumulative) ──
     let cumCollected = 0;
@@ -744,6 +787,39 @@ export default function Reports() {
     </div>
   </div>
 
+  <!-- Committed & Collected by Charity -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-dot amber"></div>
+      <div><div class="section-title">Committed &amp; Collected by Charity</div><div class="section-sub">Education Fund, Ramadan, Ciidsiinta Agoonta, and Other Charity kept separate</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Charity</th><th>Donors</th><th style="text-align:right">Committed</th><th style="text-align:right">Collected</th><th style="text-align:right">Balance</th><th style="width:120px">Progress</th></tr></thead>
+      <tbody>
+        ${typeBreakdownYr.map(t => {
+          const p = t.committed > 0 ? (t.collected / t.committed * 100) : 0;
+          return `<tr>
+            <td style="font-weight:700;color:#0f172a">${t.name}</td>
+            <td>${t.donors}</td>
+            <td style="text-align:right;font-weight:600">$${t.committed.toLocaleString()}</td>
+            <td style="text-align:right;font-weight:700;color:#059669">$${t.collected.toLocaleString()}</td>
+            <td style="text-align:right;font-weight:600;color:${t.balance>0?"#e11d48":"#94a3b8"}">$${t.balance.toLocaleString()}</td>
+            <td>${bar(t.collected, t.committed, "linear-gradient(90deg,#10b981,#059669)")}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2">All Charities</td>
+          <td style="text-align:right">$${committed.toLocaleString()}</td>
+          <td style="text-align:right">$${collected.toLocaleString()}</td>
+          <td style="text-align:right">$${outstanding.toLocaleString()}</td>
+          <td>${collRate}%</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
   <!-- Student Disbursement -->
   <div class="section">
     <div class="section-header">
@@ -752,7 +828,7 @@ export default function Reports() {
     </div>
     <div class="kpi-grid kpi-grid-4" style="margin-bottom:16px">
       <div class="kpi v"><div class="kl">Annual Budget</div><div class="kv">$${needed.toLocaleString()}</div><div class="ks">total student fees</div></div>
-      <div class="kpi g"><div class="kl">In Account</div><div class="kv">$${collected.toLocaleString()}</div><div class="ks">${budgetPct}% of annual budget</div></div>
+      <div class="kpi g"><div class="kl">In Account</div><div class="kv">$${eduCollected.toLocaleString()}</div><div class="ks">${budgetPct}% of annual budget</div></div>
       <div class="kpi b"><div class="kl">Balance</div><div class="kv">$${remaining.toLocaleString()}</div><div class="ks">available to disburse</div></div>
       <div class="kpi a"><div class="kl">Paid to Students</div><div class="kv">$${disbursed.toLocaleString()}</div><div class="ks">${paidCount} students marked paid</div></div>
     </div>
@@ -761,10 +837,10 @@ export default function Reports() {
         <span style="font-weight:700">Budget Coverage Progress</span>
         <span>${budgetPct}% of $${needed.toLocaleString()} annual target collected</span>
       </div>
-      ${bar(collected, needed, "linear-gradient(90deg,#10b981,#059669)")}
+      ${bar(eduCollected, needed, "linear-gradient(90deg,#10b981,#059669)")}
       <div style="display:flex;justify-content:space-between;font-size:9px;color:#94a3b8;margin-top:6px">
-        <span>Collected: $${collected.toLocaleString()}</span>
-        <span>Remaining: $${Math.max(0, needed - collected).toLocaleString()}</span>
+        <span>Collected: $${eduCollected.toLocaleString()}</span>
+        <span>Remaining: $${Math.max(0, needed - eduCollected).toLocaleString()}</span>
       </div>
     </div>
     <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -1066,6 +1142,57 @@ export default function Reports() {
             {val} {label}
           </div>
         ))}
+      </div>
+
+      {/* Committed & Collected by Charity Type */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="p-4 border-b border-gray-100">
+          <h3 className="font-bold text-gray-800">Committed &amp; Collected by Charity</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Education Fund, Ramadan, Ciidsiinta Agoonta, and Other Charity kept separate</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>
+                {["Charity", "Donors", "Committed", "Collected", "Balance", "Progress"].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {typeBreakdown.map(t => {
+                const pct = t.committed > 0 ? (t.collected / t.committed * 100) : 0;
+                return (
+                  <tr key={t.type} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{t.name}</td>
+                    <td className="px-4 py-3 text-gray-600">{t.donors}</td>
+                    <td className="px-4 py-3 font-semibold text-gray-700 whitespace-nowrap">${t.committed.toLocaleString()}</td>
+                    <td className="px-4 py-3 font-semibold text-emerald-600 whitespace-nowrap">${t.collected.toLocaleString()}</td>
+                    <td className="px-4 py-3 font-semibold text-rose-500 whitespace-nowrap">${t.balance.toLocaleString()}</td>
+                    <td className="px-4 py-3 min-w-[110px]">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                          <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${Math.min(100, pct)}%` }} />
+                        </div>
+                        <span className="text-[10px] font-bold text-gray-500 whitespace-nowrap">{pct.toFixed(0)}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold">
+              <tr>
+                <td className="px-4 py-3 text-xs text-gray-500 uppercase">All Charities</td>
+                <td className="px-4 py-3 text-gray-800">{filtered.length}</td>
+                <td className="px-4 py-3 text-gray-800">${totalCommitted.toLocaleString()}</td>
+                <td className="px-4 py-3 text-emerald-700">${totalPaid.toLocaleString()}</td>
+                <td className="px-4 py-3 text-rose-600">${Math.max(0, totalCommitted - totalPaid).toLocaleString()}</td>
+                <td className="px-4 py-3 text-gray-600 text-xs">{totalCommitted > 0 ? (totalPaid / totalCommitted * 100).toFixed(0) : 0}%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </div>
 
       {/* Charts row */}
