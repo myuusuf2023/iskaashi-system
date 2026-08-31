@@ -95,6 +95,185 @@ export default function Reports() {
     a.href = url; a.download = `student-fee-report-${new Date().toISOString().split("T")[0]}.csv`; a.click();
   }
 
+  function exportStudentFeePDF() {
+    const now       = new Date();
+    const dateStr   = now.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+    const timeStr   = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const levelLabel  = studentLevelFilter === "all" ? "All Levels" : studentLevelFilter === "university" ? "University" : "School";
+    const statusLabel = studentStatusFilter === "all" ? "All Statuses"
+      : studentStatusFilter === "complete" ? "Fully Paid"
+      : studentStatusFilter === "partial"  ? "Partial"
+      : "Not Started";
+
+    const bar = (pct, color) =>
+      `<div style="flex:1;background:#e2e8f0;border-radius:4px;height:7px;overflow:hidden"><div style="width:${Math.min(100, pct)}%;height:100%;background:${color};border-radius:4px"></div></div>`;
+
+    const periodRows = periodBreakdown.map(({ period, level, total, paid }) => {
+      const pct = total > 0 ? (paid / total * 100) : 0;
+      const chipBg = level === "university" ? "#ede9fe" : "#dbeafe";
+      const chipFg = level === "university" ? "#6d28d9" : "#1d4ed8";
+      return `
+        <tr>
+          <td style="padding:7px 10px"><span style="background:${chipBg};color:${chipFg};font-size:9px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap">${period}</span></td>
+          <td style="padding:7px 10px;width:60%">${bar(pct, "#10b981")}</td>
+          <td style="padding:7px 10px;font-size:11px;font-weight:700;color:#334155;text-align:right;white-space:nowrap">${paid} / ${total}</td>
+          <td style="padding:7px 10px;font-size:10px;font-weight:700;color:#94a3b8;text-align:right;white-space:nowrap">${pct.toFixed(0)}%</td>
+        </tr>`;
+    }).join("");
+
+    const studentRows = filteredStudentRows.map((r, i) => {
+      const pct = r.totalPeriods > 0 ? (r.paidCount / r.totalPeriods * 100) : 0;
+      const levelBg = r.level === "university" ? "#ede9fe" : "#dbeafe";
+      const levelFg = r.level === "university" ? "#6d28d9" : "#1d4ed8";
+      return `
+        <tr style="background:${i % 2 === 0 ? "#ffffff" : "#f8fafc"}">
+          <td style="padding:8px 10px;color:#94a3b8;font-size:10px;text-align:center">${i + 1}</td>
+          <td style="padding:8px 10px;font-weight:600;color:#1e293b;font-size:11px">${r.name}</td>
+          <td style="padding:8px 10px;font-size:10px"><span style="background:${levelBg};color:${levelFg};padding:2px 7px;border-radius:6px;font-weight:700">${r.level === "university" ? "University" : "School"}</span></td>
+          <td style="padding:8px 10px;font-size:11px;font-weight:700;color:#059669;text-align:center;white-space:nowrap">${r.paidCount} / ${r.totalPeriods}</td>
+          <td style="padding:8px 10px;font-size:9px;color:${r.remainingPeriods.length ? "#e11d48" : "#94a3b8"}">${r.remainingPeriods.length ? r.remainingPeriods.join(", ") : "None"}</td>
+          <td style="padding:8px 10px;font-size:11px;font-weight:700;color:#1e293b;text-align:right;white-space:nowrap">$${r.amountPaid.toLocaleString()}</td>
+          <td style="padding:8px 10px;text-align:center">
+            <div style="display:inline-flex;align-items:center;gap:6px">
+              <div style="width:44px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${pct===100?"#10b981":"#3b82f6"};border-radius:3px"></div></div>
+              <span style="font-size:9px;font-weight:700;color:#64748b">${pct.toFixed(0)}%</span>
+            </div>
+          </td>
+        </tr>`;
+    }).join("");
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>Iskaashi Student Fee Payment Report — ${now.getFullYear()}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Inter',sans-serif; background:#f1f5f9; color:#1e293b; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    @page { size:A4 landscape; margin:0; }
+    @media print { body{background:#fff} .no-print{display:none!important} .page-break{page-break-before:always} }
+    .page { max-width:1050px; margin:0 auto; background:#fff; min-height:100vh; }
+
+    .header { background:linear-gradient(135deg,#4c1d95 0%,#5b21b6 50%,#6d28d9 100%); padding:28px 36px 24px; position:relative; overflow:hidden; }
+    .header::before { content:''; position:absolute; top:-40px; right:-40px; width:200px; height:200px; background:rgba(255,255,255,0.05); border-radius:50%; }
+    .header::after  { content:''; position:absolute; bottom:-60px; left:30%; width:280px; height:280px; background:rgba(255,255,255,0.03); border-radius:50%; }
+    .org-name { color:#c4b5fd; font-size:11px; font-weight:700; letter-spacing:3px; text-transform:uppercase; margin-bottom:4px; }
+    .report-title { color:#fff; font-size:26px; font-weight:900; letter-spacing:-0.5px; }
+    .report-subtitle { color:#ddd6fe; font-size:13px; margin-top:4px; }
+    .header-meta { display:flex; gap:20px; margin-top:16px; flex-wrap:wrap; }
+    .meta-pill { background:rgba(255,255,255,0.12); color:#ede9fe; font-size:10px; font-weight:600; padding:4px 10px; border-radius:20px; border:1px solid rgba(255,255,255,0.18); }
+
+    .kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; padding:20px 36px 0; }
+    .kpi { background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; }
+    .kpi-label { font-size:10px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+    .kpi-value { font-size:22px; font-weight:900; color:#1e293b; line-height:1; }
+    .kpi-sub   { font-size:10px; color:#94a3b8; margin-top:4px; }
+    .kpi.blue   { border-left:3px solid #3b82f6; } .kpi.blue .kpi-value   { color:#2563eb; }
+    .kpi.green  { border-left:3px solid #10b981; } .kpi.green .kpi-value  { color:#059669; }
+    .kpi.rose   { border-left:3px solid #f43f5e; } .kpi.rose .kpi-value   { color:#e11d48; }
+    .kpi.violet { border-left:3px solid #8b5cf6; } .kpi.violet .kpi-value { color:#7c3aed; }
+
+    .progress-wrap { padding:16px 36px 0; }
+    .progress-box { background:#f8fafc; border-radius:10px; padding:12px 16px; display:flex; align-items:center; gap:14px; }
+    .progress-label { font-size:10px; font-weight:700; color:#64748b; white-space:nowrap; }
+    .progress-track { flex:1; background:#e2e8f0; border-radius:5px; height:9px; overflow:hidden; }
+    .progress-fill { height:100%; background:linear-gradient(90deg,#10b981,#059669); border-radius:5px; }
+    .progress-pct { font-size:11px; font-weight:800; color:#059669; white-space:nowrap; }
+
+    .table-wrap { padding:20px 36px 0; }
+    .section-title { font-size:12px; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:1.5px; margin:0 0 10px; padding-top:14px; border-top:2px solid #f1f5f9; }
+    table { width:100%; border-collapse:collapse; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+    thead tr { background:linear-gradient(90deg,#4c1d95,#5b21b6); }
+    thead th { padding:10px 10px; text-align:left; font-size:10px; font-weight:700; color:#ddd6fe; text-transform:uppercase; letter-spacing:1px; }
+    tfoot tr { background:#f1f5f9; border-top:2px solid #e2e8f0; }
+    tfoot td { padding:10px 10px; font-size:11px; font-weight:700; color:#334155; }
+
+    .footer { background:#f8fafc; border-top:1px solid #e2e8f0; padding:14px 36px; display:flex; justify-content:space-between; align-items:center; margin-top:20px; }
+    .footer-left  { font-size:10px; color:#94a3b8; }
+    .footer-right { font-size:10px; color:#94a3b8; text-align:right; }
+    .footer-org   { font-size:11px; font-weight:700; color:#7c3aed; }
+
+    .print-btn { display:block; margin:24px auto 0; background:linear-gradient(135deg,#7c3aed,#5b21b6); color:#fff; border:none; padding:12px 32px; border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; letter-spacing:0.5px; box-shadow:0 4px 12px rgba(124,58,237,0.35); }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="org-name">Iskaashi Educational Development Org.</div>
+    <div class="report-title">Student Fee Payment Report</div>
+    <div class="report-subtitle">Quarterly / Semester Fee Status — ${now.getFullYear()}</div>
+    <div class="header-meta">
+      <span class="meta-pill">📅 ${dateStr} · ${timeStr}</span>
+      <span class="meta-pill">🎓 ${levelLabel}</span>
+      <span class="meta-pill">⚡ ${statusLabel}</span>
+      <span class="meta-pill">👥 ${filteredStudentRows.length} Students</span>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi blue"><div class="kpi-label">Students</div><div class="kpi-value">${filteredStudentRows.length}</div><div class="kpi-sub">in this report</div></div>
+    <div class="kpi green"><div class="kpi-label">Payments Recorded</div><div class="kpi-value">${totalPaidPeriods}</div><div class="kpi-sub">across every student</div></div>
+    <div class="kpi rose"><div class="kpi-label">Payments Outstanding</div><div class="kpi-value">${totalRemainingPeriods}</div><div class="kpi-sub">still to be collected</div></div>
+    <div class="kpi violet"><div class="kpi-label">Total Disbursed</div><div class="kpi-value">$${totalStudentAmountPaid.toLocaleString()}</div><div class="kpi-sub">paid out to students</div></div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-box">
+      <span class="progress-label">OVERALL PROGRESS</span>
+      <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, pctPeriodsPaid)}%"></div></div>
+      <span class="progress-pct">${totalPaidPeriods} / ${totalExpectedPeriods} (${pctPeriodsPaid.toFixed(0)}%)</span>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <p class="section-title">Payment Status by Quarter / Semester</p>
+    <table>
+      <thead><tr><th style="width:100px">Period</th><th>Progress</th><th style="text-align:right">Paid</th><th style="text-align:right">%</th></tr></thead>
+      <tbody>${periodRows || `<tr><td colspan="4" style="padding:16px;text-align:center;color:#94a3b8;font-size:11px">No data to show.</td></tr>`}</tbody>
+    </table>
+  </div>
+
+  <div class="table-wrap" style="padding-bottom:36px">
+    <p class="section-title">Individual Student Detail</p>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30px">#</th><th>Student</th><th>Level</th><th style="text-align:center">Paid</th>
+          <th>Remaining</th><th style="text-align:right">Amount Paid</th><th style="text-align:center">Progress</th>
+        </tr>
+      </thead>
+      <tbody>${studentRows || `<tr><td colspan="7" style="padding:16px;text-align:center;color:#94a3b8;font-size:11px">No students match the selected filters.</td></tr>`}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3" style="color:#94a3b8;font-size:10px;text-transform:uppercase">Totals — ${filteredStudentRows.length} students</td>
+          <td style="text-align:center">${totalPaidPeriods} / ${totalExpectedPeriods}</td>
+          <td style="color:#e11d48">${totalRemainingPeriods} remaining</td>
+          <td style="text-align:right">$${totalStudentAmountPaid.toLocaleString()}</td>
+          <td style="text-align:center">${pctPeriodsPaid.toFixed(0)}%</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div class="footer-left"><div class="footer-org">Iskaashi Educational Development Org.</div><div>Confidential · For internal use only · ${dateStr}</div></div>
+    <div class="footer-right"><div>Iskaashi Management System</div><div>Generated at ${timeStr}</div></div>
+  </div>
+
+  <button class="print-btn no-print" onclick="window.print()">🖨&nbsp; Save as PDF / Print</button>
+</div>
+<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),800))</script>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    if (!win) { alert("Please allow pop-ups for this site to export PDF."); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+
   // Available years from data
   const availableYears = Array.from(new Set([
     thisYear,
@@ -1022,12 +1201,20 @@ export default function Reports() {
               Quarterly / semester fee status — showing {filteredStudentRows.length} of {orphans.length} students
             </p>
           </div>
-          <button
-            onClick={exportStudentReport}
-            className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl font-semibold text-sm transition"
-          >
-            <Download className="w-4 h-4" /> CSV
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={exportStudentReport}
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl font-semibold text-sm transition"
+            >
+              <Download className="w-4 h-4" /> CSV
+            </button>
+            <button
+              onClick={exportStudentFeePDF}
+              className="flex items-center gap-2 bg-gradient-to-br from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white px-4 py-2.5 rounded-xl font-semibold text-sm shadow-lg transition"
+            >
+              <FileText className="w-4 h-4" /> Fee Report PDF
+            </button>
+          </div>
         </div>
 
         {/* Filters */}
