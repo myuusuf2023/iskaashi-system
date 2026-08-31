@@ -1268,7 +1268,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1.5">Age</label>
+                      <label className="block text-xs font-bold text-gray-500 mb-1.5">Age <span className="text-gray-300 font-normal">(optional)</span></label>
                       <input type="number" min="3" max="25" value={form.age}
                         onChange={e => setForm(f => ({ ...f, age: e.target.value }))}
                         className="w-full border border-gray-200 bg-gray-50 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-rose-300 focus:bg-white transition"
