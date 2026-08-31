@@ -1055,7 +1055,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
                     {isSuperAdmin && <th className="px-3 py-2.5"><input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-4 h-4 accent-rose-500 cursor-pointer" /></th>}
-                    {["No","Full Name","School","Grade","District","Monthly ($)","Quarterly ($)","Administrator","Phone","Status",...(isAdmin?["Actions"]:[])].map(h => (
+                    {["No","Full Name","School","Grade","District","Monthly ($)","Quarterly ($)","Annual ($)","Administrator","Phone","Status",...(isAdmin?["Actions"]:[])].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -1084,6 +1084,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                       <td className="px-3 py-3">{o.district ? <span className="bg-amber-50 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-lg">{o.district}</span> : <span className="text-gray-300 text-xs">—</span>}</td>
                       <td className="px-3 py-3 text-center">{(o.monthlySupport||0)>0 ? <span className="font-black text-emerald-600">${o.monthlySupport}</span> : <span className="bg-rose-50 text-rose-500 text-[10px] font-bold px-2 py-0.5 rounded-lg">Pending</span>}</td>
                       <td className="px-3 py-3 font-bold text-blue-600 text-center text-xs">${o.threeMonthSupport || 0}</td>
+                      <td className="px-3 py-3 font-bold text-violet-600 text-center text-xs">${(o.threeMonthSupport || 0) * 4}</td>
                       <td className="px-3 py-3 text-gray-600 text-xs min-w-[110px]">{o.guardian || "—"}</td>
                       <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">{o.phone || "—"}</td>
                       <td className="px-3 py-3">{(() => { const cfg = ENROLLMENT_STATUSES[o.enrollmentStatus||"active"]||ENROLLMENT_STATUSES.active; return <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg ${cfg.color}`}><div className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`}/>{cfg.label}</span>; })()}</td>
