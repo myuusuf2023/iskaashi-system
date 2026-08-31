@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import {
   ShieldAlert, X, Trash2, Upload, AlertTriangle,
   CheckCircle2, Users, Baby, CreditCard, FileSpreadsheet,
-  Zap, ChevronRight, Shuffle
+  Zap, ChevronRight, Shuffle, ArrowUpFromLine
 } from "lucide-react";
 import {
   clearAllData,
@@ -260,6 +260,9 @@ export default function SuperAdminPanel({ onClose }) {
   const smartRef = useRef();
   const rawRef   = useRef();
 
+  const [migrating, setMigrating]     = useState(false);
+  const [migrateResult, setMigrateResult] = useState(null);
+
   // Smart import state
   const [preview,   setPreview]   = useState(null);
   const [importing, setImporting] = useState(false);
@@ -269,9 +272,38 @@ export default function SuperAdminPanel({ onClose }) {
   const [rawPreview,  setRawPreview]  = useState(null);
   const [rawResult,   setRawResult]   = useState(null);
 
-  function handleClearAll() {
+  async function migrateFromLocalStorage() {
+    setMigrating(true);
+    setMigrateResult(null);
+    try {
+      const parse = key => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } };
+      const donors   = parse("isk_donors")   || [];
+      const payments = parse("isk_payments") || [];
+      const orphans  = parse("isk_orphans")  || [];
+      const history  = parse("isk_history")  || [];
+      const target   = parse("isk_target");
+      const budget   = parse("isk_fund_budget");
+      const sb       = localStorage.getItem("isk_student_budget");
+
+      const apiFetch = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (donors.length)   await saveDonors(donors);
+      if (payments.length) await savePayments(payments);
+      if (orphans.length)  await saveOrphans(orphans);
+      if (history.length)  await saveHistory(history);
+      if (target)          await apiFetch("/api/settings/isk_target",         target);
+      if (budget)          await apiFetch("/api/settings/isk_fund_budget",    budget);
+      if (sb)              await apiFetch("/api/settings/isk_student_budget", Number(sb) || 0);
+
+      setMigrateResult({ donors: donors.length, payments: payments.length, orphans: orphans.length });
+    } catch (err) {
+      setMigrateResult({ error: err.message });
+    }
+    setMigrating(false);
+  }
+
+  async function handleClearAll() {
     if (confirmText !== "DELETE") return;
-    clearAllData();
+    await clearAllData();
     setCleared(true);
     setConfirmText("");
     setPreview(null);
@@ -334,18 +366,19 @@ export default function SuperAdminPanel({ onClose }) {
     e.target.value = "";
   }
 
-  function confirmRawImport() {
+  async function confirmRawImport() {
     if (!rawPreview) return;
     const { donors, payments } = rawPreview;
-    if (donors.length > 0)   saveDonors([...getDonors(), ...donors]);
+    const [existingDonors, existingPayments] = await Promise.all([getDonors(), getPayments()]);
+    if (donors.length > 0) await saveDonors([...existingDonors, ...donors]);
     if (payments.length > 0) {
-      const updated = getDonors().map(d => {
+      const allDonors = await getDonors();
+      const updated = allDonors.map(d => {
         const total = payments.filter(p => p.donorId === d.id).reduce((s, p) => s + p.amount, 0);
-        // Use total from payment records as authoritative paid amount (not additive, to prevent double-count)
         return total > 0 ? { ...d, paid: total } : d;
       });
-      saveDonors(updated);
-      savePayments([...getPayments(), ...payments]);
+      await saveDonors(updated);
+      await savePayments([...existingPayments, ...payments]);
     }
     setRawResult({ donors: donors.length, payments: payments.length });
     setRawPreview(null);
@@ -387,7 +420,7 @@ export default function SuperAdminPanel({ onClose }) {
 
           } else if (type === "payment") {
             const amount = parseAmt(pick(row, "baxshay", "paid", "amount", "$"));
-            if (amount > 0) allPayments.push(mapPayment(row, allPayments.length, getDonors()));
+            if (amount > 0) allPayments.push(mapPayment(row, allPayments.length, allDonors));
 
           } else {
             // donor — also extract payment if baxshay/paid > 0
@@ -425,29 +458,25 @@ export default function SuperAdminPanel({ onClose }) {
     e.target.value = "";
   }
 
-  function confirmImport() {
+  async function confirmImport() {
     if (!preview) return;
     setImporting(true);
 
     const { donors, orphans, payments } = preview;
+    const [existingDonors, existingOrphans, existingPayments] = await Promise.all([
+      getDonors(), getOrphans(), getPayments(),
+    ]);
 
-    if (donors.length > 0) {
-      const existing = getDonors();
-      saveDonors([...existing, ...donors]);
-    }
-    if (orphans.length > 0) {
-      const existing = getOrphans();
-      saveOrphans([...existing, ...orphans]);
-    }
+    if (donors.length > 0) await saveDonors([...existingDonors, ...donors]);
+    if (orphans.length > 0) await saveOrphans([...existingOrphans, ...orphans]);
     if (payments.length > 0) {
-      const existing = getPayments();
-      // Update donor paid totals
-      const updatedDonors = getDonors().map(d => {
+      const allDonors = await getDonors();
+      const updatedDonors = allDonors.map(d => {
         const total = payments.filter(p => p.donorId === d.id).reduce((s, p) => s + p.amount, 0);
         return total > 0 ? { ...d, paid: total } : d;
       });
-      saveDonors(updatedDonors);
-      savePayments([...existing, ...payments]);
+      await saveDonors(updatedDonors);
+      await savePayments([...existingPayments, ...payments]);
     }
 
     setResult({ donors: donors.length, orphans: orphans.length, payments: payments.length });
@@ -478,6 +507,41 @@ export default function SuperAdminPanel({ onClose }) {
         </div>
 
         <div className="overflow-y-auto flex-1 p-5 space-y-5">
+
+          {/* ── Migrate from Local Storage ───────────────────── */}
+          <div className="border-2 border-emerald-200 rounded-2xl overflow-hidden">
+            <div className="bg-emerald-50 px-4 py-3 flex items-center gap-2 border-b border-emerald-200">
+              <ArrowUpFromLine className="w-4 h-4 text-emerald-600" />
+              <p className="text-emerald-700 font-bold text-sm">Migrate Local Data to Server</p>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-gray-500 text-xs leading-relaxed">
+                Reads all data stored in <strong>this browser's local storage</strong> and pushes it directly into the server database. Run this once from your local machine to migrate existing data.
+              </p>
+              {migrateResult && !migrateResult.error && (
+                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                  <p className="text-emerald-700 text-xs font-semibold">
+                    Migrated: {migrateResult.donors} donors · {migrateResult.payments} payments · {migrateResult.orphans} orphans
+                  </p>
+                </div>
+              )}
+              {migrateResult?.error && (
+                <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0" />
+                  <p className="text-rose-700 text-xs font-semibold">{migrateResult.error}</p>
+                </div>
+              )}
+              <button
+                onClick={migrateFromLocalStorage}
+                disabled={migrating}
+                className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all active:scale-95"
+              >
+                <ArrowUpFromLine className="w-4 h-4" />
+                {migrating ? "Migrating…" : "Migrate Local Data → Server"}
+              </button>
+            </div>
+          </div>
 
           {/* ── Smart Universal Import ───────────────────────── */}
           <div className="border-2 border-purple-200 rounded-2xl overflow-hidden">

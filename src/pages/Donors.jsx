@@ -54,7 +54,7 @@ export default function Donors() {
   const [importResult, setImportResult]       = useState(null);
   const fileRef = useRef();
 
-  const reload = () => setDonors(getDonors());
+  const reload = async () => setDonors(await getDonors());
   useEffect(() => { reload(); }, []);
 
   const filtered = donors.filter(d => {
@@ -93,8 +93,8 @@ export default function Donors() {
     }
   }
 
-  function deleteSelected() {
-    selected.forEach(id => deleteDonor(id));
+  async function deleteSelected() {
+    await Promise.all([...selected].map(id => deleteDonor(id)));
     setSelected(new Set());
     setConfirmBulkDelete(false);
     reload();
@@ -117,11 +117,11 @@ export default function Donors() {
     setShowModal(true);
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     const data = { ...form, committed: +form.committed, paid: +form.paid };
-    if (editing) updateDonor({ ...data, id: editing });
-    else addDonor(data);
+    if (editing) await updateDonor({ ...data, id: editing });
+    else await addDonor(data);
     setShowModal(false);
     reload();
   }
@@ -131,7 +131,7 @@ export default function Donors() {
     if (!file) return;
     const isExcel = /\.(xlsx|xls)$/i.test(file.name);
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
       let rows;
       if (isExcel) {
         const wb    = XLSX.read(ev.target.result, { type: "array" });
@@ -145,7 +145,7 @@ export default function Donors() {
       } else {
         rows = parseCSV(ev.target.result);
       }
-      const count = importDonors(rows);
+      const { count } = await importDonors(rows);
       setImportResult({ count, filename: file.name });
       reload();
     };
@@ -280,6 +280,11 @@ export default function Donors() {
           </div>
           {/* Row 2: filters */}
           <div className="flex flex-wrap gap-2">
+            <select value={filterType} onChange={e => setFilter(e.target.value)}
+              className="flex-1 min-w-[110px] bg-gray-50 border border-gray-200 rounded-xl px-2 py-1.5 text-xs outline-none text-gray-600">
+              <option value="ALL">All Charities</option>
+              {Object.entries(PAYMENT_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
             <select value={filterLoc} onChange={e => setFilterLoc(e.target.value)}
               className="flex-1 min-w-[110px] bg-gray-50 border border-gray-200 rounded-xl px-2 py-1.5 text-xs outline-none text-gray-600">
               <option value="ALL">{t("all_locations")}</option>
@@ -513,7 +518,11 @@ export default function Donors() {
                 {/* Right column */}
                 <div className="space-y-3">
                   <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-100 space-y-2.5">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Education Fund</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Charity / Fund</p>
+                    <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                      className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-300 shadow-sm transition">
+                      {Object.entries(PAYMENT_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="block text-xs font-semibold text-gray-500 mb-1">{t("committed_label")} ($)</label>
@@ -591,7 +600,7 @@ export default function Donors() {
               <div className="flex gap-3 mt-6">
                 <button onClick={() => setConfirmDelete(null)}
                   className="flex-1 border border-gray-200 text-gray-600 py-3 rounded-2xl font-semibold text-sm hover:bg-gray-50 transition">{t("cancel")}</button>
-                <button onClick={() => { deleteDonor(confirmDelete); setConfirmDelete(null); reload(); }}
+                <button onClick={async () => { await deleteDonor(confirmDelete); setConfirmDelete(null); reload(); }}
                   className="flex-1 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white py-3 rounded-2xl font-bold text-sm shadow-lg active:scale-[0.98] transition-all">{t("delete")}</button>
               </div>
             </div>

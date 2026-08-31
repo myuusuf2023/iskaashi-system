@@ -12,8 +12,8 @@ import SuperAdminPanel from "./SuperAdminPanel";
 const navItems = [
   { to: "/",         key: "nav_dashboard", icon: LayoutDashboard },
   { to: "/donors",   key: "nav_donors",    icon: Users },
-  { to: "/orphans",  key: "nav_orphans",   icon: Baby },
   { to: "/payments", key: "nav_payments",  icon: CreditCard },
+  { to: "/orphans",  key: "nav_orphans",   icon: Baby },
   { to: "/reports",  key: "nav_reports",   icon: BarChart3 },
   { to: "/history",  key: "nav_history",   icon: History },
 ];

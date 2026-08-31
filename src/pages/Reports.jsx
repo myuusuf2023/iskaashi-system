@@ -4,7 +4,10 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from "recharts";
 import { Download, TrendingUp, Users, DollarSign, Search, Filter, FileText } from "lucide-react";
-import { getDonors, getPayments, getOrphans, getBudgetSummary, PAYMENT_TYPES, LOCATIONS } from "../data/store";
+import {
+  getDonors, getPayments, getOrphans, getOrphanPayments, getBudgetSummary,
+  PAYMENT_TYPES, LOCATIONS, applicablePeriods
+} from "../data/store";
 import { useLanguage } from "../context/LanguageContext";
 
 const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
@@ -13,6 +16,8 @@ export default function Reports() {
   useLanguage();
   const [donors,   setDonors]   = useState([]);
   const [payments, setPayments] = useState([]);
+  const [orphans,        setOrphans]        = useState([]);
+  const [orphanPayments, setOrphanPayments] = useState([]);
 
   const thisYear = new Date().getFullYear();
   const [selectedYear,   setSelectedYear]   = useState("all");
@@ -20,10 +25,75 @@ export default function Reports() {
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [search,         setSearch]         = useState("");
 
+  const [studentSearch,       setStudentSearch]       = useState("");
+  const [studentLevelFilter,  setStudentLevelFilter]  = useState("all");  // all | school | university
+  const [studentStatusFilter, setStudentStatusFilter] = useState("all"); // all | complete | partial | none
+
   useEffect(() => {
-    setDonors(getDonors());
-    setPayments(getPayments());
+    async function load() {
+      const [d, p, o, op] = await Promise.all([getDonors(), getPayments(), getOrphans(), getOrphanPayments()]);
+      setDonors(d); setPayments(p); setOrphans(o); setOrphanPayments(op);
+    }
+    load();
   }, []);
+
+  // ── Student quarterly/semester fee status ─────────────────────
+  const studentRows = orphans.map(o => {
+    const periods         = applicablePeriods(o);
+    const paidPeriods     = orphanPayments.filter(p => p.orphanId === o.id).map(p => p.period);
+    const remainingPeriods = periods.filter(p => !paidPeriods.includes(p));
+    const amountPaid      = orphanPayments
+      .filter(p => p.orphanId === o.id)
+      .reduce((s, p) => s + (p.amount || 0), 0);
+    return {
+      id: o.id, name: o.name, level: o.level || "school",
+      periods, totalPeriods: periods.length, paidCount: paidPeriods.length,
+      remainingCount: remainingPeriods.length, remainingPeriods, paidPeriods, amountPaid,
+    };
+  });
+
+  const filteredStudentRows = studentRows.filter(r => {
+    if (studentLevelFilter !== "all" && r.level !== studentLevelFilter) return false;
+    if (studentSearch && !r.name.toLowerCase().includes(studentSearch.toLowerCase())) return false;
+    if (studentStatusFilter === "complete" && r.remainingCount !== 0) return false;
+    if (studentStatusFilter === "partial"  && !(r.paidCount > 0 && r.remainingCount > 0)) return false;
+    if (studentStatusFilter === "none"     && r.paidCount !== 0) return false;
+    return true;
+  });
+
+  const totalExpectedPeriods  = filteredStudentRows.reduce((s, r) => s + r.totalPeriods, 0);
+  const totalPaidPeriods      = filteredStudentRows.reduce((s, r) => s + r.paidCount, 0);
+  const totalRemainingPeriods = totalExpectedPeriods - totalPaidPeriods;
+  const totalStudentAmountPaid = filteredStudentRows.reduce((s, r) => s + r.amountPaid, 0);
+  const pctPeriodsPaid        = totalExpectedPeriods > 0 ? (totalPaidPeriods / totalExpectedPeriods * 100) : 0;
+
+  // Per-quarter / per-semester breakdown — e.g. "Q1 2026: 12 of 57 students paid"
+  const periodBreakdownMap = {};
+  filteredStudentRows.forEach(r => {
+    r.periods.forEach(period => {
+      if (!periodBreakdownMap[period]) periodBreakdownMap[period] = { period, level: r.level, total: 0, paid: 0 };
+      periodBreakdownMap[period].total++;
+      if (r.paidPeriods.includes(period)) periodBreakdownMap[period].paid++;
+    });
+  });
+  const periodBreakdown = Object.values(periodBreakdownMap).sort((a, b) =>
+    a.level !== b.level ? a.level.localeCompare(b.level) : a.period.localeCompare(b.period, undefined, { numeric: true })
+  );
+
+  function exportStudentReport() {
+    const rows = [
+      ["#", "Student", "Level", "Paid", "Total", "Remaining Periods", "Amount Paid ($)"],
+      ...filteredStudentRows.map((r, i) => [
+        i + 1, r.name, r.level, r.paidCount, r.totalPeriods,
+        r.remainingPeriods.join(" | "), r.amountPaid,
+      ])
+    ];
+    const csv  = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `student-fee-report-${new Date().toISOString().split("T")[0]}.csv`; a.click();
+  }
 
   // Available years from data
   const availableYears = Array.from(new Set([
@@ -940,6 +1010,185 @@ export default function Reports() {
               </tr>
             </tfoot>
           </table>
+        </div>
+      </div>
+
+      {/* ── Student Fee Payment Report ─────────────────────────── */}
+      <div className="pt-4 border-t border-gray-100 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">Student Fee Payment Report</h2>
+            <p className="text-sm text-gray-400">
+              Quarterly / semester fee status — showing {filteredStudentRows.length} of {orphans.length} students
+            </p>
+          </div>
+          <button
+            onClick={exportStudentReport}
+            className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl font-semibold text-sm transition"
+          >
+            <Download className="w-4 h-4" /> CSV
+          </button>
+        </div>
+
+        {/* Filters */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest">
+            <Filter className="w-3.5 h-3.5" /> Filters
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Level</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[["all","All"], ["school","School"], ["university","University"]].map(([val, label]) => (
+                  <FilterBtn key={val} active={studentLevelFilter === val} onClick={() => setStudentLevelFilter(val)}>{label}</FilterBtn>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Payment Status</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[["all","All"], ["complete","Fully Paid"], ["partial","Partial"], ["none","Not Started"]].map(([val, label]) => (
+                  <FilterBtn key={val} active={studentStatusFilter === val} onClick={() => setStudentStatusFilter(val)}>{label}</FilterBtn>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5 flex-1 min-w-[160px]">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Search</p>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                <input
+                  value={studentSearch}
+                  onChange={e => setStudentSearch(e.target.value)}
+                  placeholder="Search by student name…"
+                  className="pl-8 pr-3 py-1.5 border border-gray-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-300 w-full"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Students",                     value: filteredStudentRows.length,             bg: "from-blue-500 to-blue-600" },
+            { label: "Payments Recorded (all students)", value: totalPaidPeriods,                   bg: "from-emerald-500 to-emerald-600" },
+            { label: "Payments Outstanding",         value: totalRemainingPeriods,                   bg: "from-rose-500 to-rose-600" },
+            { label: "Total Disbursed",               value: `$${totalStudentAmountPaid.toLocaleString()}`, bg: "from-violet-500 to-violet-600" },
+          ].map(({ label, value, bg }) => (
+            <div key={label} className={`bg-gradient-to-br ${bg} rounded-2xl p-4 text-white shadow-md`}>
+              <p className="text-2xl font-bold">{value}</p>
+              <p className="text-xs opacity-80 mt-0.5">{label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Overall progress */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div className="flex items-center justify-between text-xs font-semibold text-gray-500 mb-1.5">
+            <span>Overall payments recorded (sum across every student's own quarters/semesters)</span>
+            <span>{totalPaidPeriods} / {totalExpectedPeriods} ({pctPeriodsPaid.toFixed(0)}%)</span>
+          </div>
+          <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+            <div className="h-2.5 rounded-full bg-emerald-500" style={{ width: `${Math.min(100, pctPeriodsPaid)}%` }} />
+          </div>
+        </div>
+
+        {/* Per-quarter / per-semester breakdown */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b border-gray-100">
+            <h3 className="font-bold text-gray-800">Payment Status by Quarter / Semester</h3>
+            <p className="text-xs text-gray-400 mt-0.5">How many of the {filteredStudentRows.length} students have paid each specific period</p>
+          </div>
+          {periodBreakdown.length === 0 ? (
+            <p className="text-gray-400 text-xs text-center py-8">No data to show.</p>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {periodBreakdown.map(({ period, level, total, paid }) => {
+                const pct = total > 0 ? (paid / total * 100) : 0;
+                return (
+                  <div key={period} className="flex items-center gap-4 px-4 py-3">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-lg whitespace-nowrap ${level === "university" ? "bg-violet-50 text-violet-700" : "bg-blue-50 text-blue-700"}`}>
+                      {period}
+                    </span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${Math.min(100, pct)}%` }} />
+                    </div>
+                    <span className="text-xs font-bold text-gray-600 whitespace-nowrap w-24 text-right">{paid} / {total} paid</span>
+                    <span className="text-xs font-bold text-gray-400 whitespace-nowrap w-12 text-right">{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Individual student table */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b border-gray-100">
+            <h3 className="font-bold text-gray-800">Individual Student Detail — {filteredStudentRows.length} records</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  {["#", "Student", "Level", "Paid", "Remaining", "Amount Paid", "Progress"].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredStudentRows.length === 0 && (
+                  <tr><td colSpan={7} className="text-center py-8 text-gray-400 text-sm">No students match the selected filters.</td></tr>
+                )}
+                {filteredStudentRows.map((r, i) => {
+                  const pct = r.totalPeriods > 0 ? (r.paidCount / r.totalPeriods * 100) : 0;
+                  return (
+                    <tr key={r.id} className="hover:bg-gray-50 align-top">
+                      <td className="px-4 py-2.5 text-gray-400 text-xs">{i + 1}</td>
+                      <td className="px-4 py-2.5 font-semibold text-gray-800 max-w-[160px] truncate">{r.name}</td>
+                      <td className="px-4 py-2.5 text-xs">
+                        <span className={`px-2 py-0.5 rounded-lg font-medium whitespace-nowrap ${r.level === "university" ? "bg-violet-50 text-violet-700" : "bg-blue-50 text-blue-700"}`}>
+                          {r.level === "university" ? "University" : "School"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded-lg whitespace-nowrap">{r.paidCount}/{r.totalPeriods}</span>
+                      </td>
+                      <td className="px-4 py-2.5 max-w-[240px]">
+                        {r.remainingPeriods.length === 0 ? (
+                          <span className="text-emerald-600 text-xs font-semibold">None</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {r.remainingPeriods.map(p => (
+                              <span key={p} className="bg-rose-50 text-rose-600 text-[10px] font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap">{p}</span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 font-semibold text-emerald-600 whitespace-nowrap">${r.amountPaid.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 min-w-[100px]">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                            <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${Math.min(100, pct)}%` }} />
+                          </div>
+                          <span className="text-[10px] font-bold text-gray-500">{pct.toFixed(0)}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold">
+                <tr>
+                  <td colSpan={3} className="px-4 py-3 text-xs text-gray-500 uppercase">Totals ({filteredStudentRows.length} students)</td>
+                  <td className="px-4 py-3 text-gray-800">{totalPaidPeriods}/{totalExpectedPeriods}</td>
+                  <td className="px-4 py-3 text-rose-600">{totalRemainingPeriods} remaining</td>
+                  <td className="px-4 py-3 text-emerald-700">${totalStudentAmountPaid.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-gray-600 text-xs">{pctPeriodsPaid.toFixed(0)}% paid</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       </div>
     </div>

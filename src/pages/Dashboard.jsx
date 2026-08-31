@@ -11,8 +11,7 @@ import {
 import StatCard from "../components/StatCard";
 import { getDonors, getPayments, PAYMENT_TYPES, getTarget, setTarget,
          getDonationAccounts, addDonationAccount, updateDonationAccount, deleteDonationAccount,
-         getBudgetSummary, redistributeJanPayments,
-         getStudentBudget, setStudentBudget, reconcileDonorPaid } from "../data/store";
+         getBudgetSummary, getStudentBudget, setStudentBudget } from "../data/store";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 
@@ -25,28 +24,37 @@ export default function Dashboard() {
   const { t } = useLanguage();
   const [donors, setDonors]   = useState([]);
   const [payments, setPayments] = useState([]);
-  const [goal, setGoal]         = useState(() => getTarget());
+  const [goal, setGoal]         = useState({ amount: 3350, label: "Education Fund " + new Date().getFullYear() });
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalForm, setGoalForm]       = useState({ amount: "", label: "" });
 
-  const [accounts, setAccounts]           = useState(() => getDonationAccounts());
+  const [accounts, setAccounts]           = useState([]);
   const [managingAccounts, setManagingAccounts] = useState(false);
   const [accountForm, setAccountForm]     = useState({ accountName: "Iskaashi", provider: "", accountNumber: "", phone: "", notes: "" });
   const [editingAccount, setEditingAccount] = useState(null);
 
   const [editingStudentBudget, setEditingStudentBudget] = useState(false);
-  const [studentBudgetInput, setStudentBudgetInput]     = useState(() => String(getStudentBudget() || ""));
+  const [studentBudgetInput, setStudentBudgetInput]     = useState("");
 
-  const budgetSummary = getBudgetSummary();
+  const [budgetSummary, setBudgetSummary] = useState({ total: 0, disbursed: 0, remaining: 0, needed: 0, shortfall: 0, paidCount: 0, totalStudents: 0, status: "unset" });
 
   const thisYear = new Date().getFullYear();
   const selectedYear = thisYear;
 
   useEffect(() => {
-    reconcileDonorPaid();
-    redistributeJanPayments();
-    setDonors(getDonors());
-    setPayments(getPayments());
+    async function load() {
+      const [d, p, g, accs, budget, sb] = await Promise.all([
+        getDonors(), getPayments(), getTarget(),
+        getDonationAccounts(), getBudgetSummary(), getStudentBudget(),
+      ]);
+      setDonors(d);
+      setPayments(p);
+      setGoal(g);
+      setAccounts(accs);
+      setBudgetSummary(budget);
+      setStudentBudgetInput(String(sb || ""));
+    }
+    load();
   }, []);
 
   function openGoalEdit() {
@@ -54,9 +62,9 @@ export default function Dashboard() {
     setEditingGoal(true);
   }
 
-  function saveGoal() {
+  async function saveGoal() {
     const updated = { amount: +goalForm.amount || 0, label: goalForm.label || goal.label };
-    setTarget(updated);
+    await setTarget(updated);
     setGoal(updated);
     setEditingGoal(false);
   }
@@ -71,21 +79,21 @@ export default function Dashboard() {
     setAccountForm({ accountName: acc.accountName, provider: acc.provider, accountNumber: acc.accountNumber, phone: acc.phone, notes: acc.notes });
   }
 
-  function saveAccount() {
+  async function saveAccount() {
     if (!accountForm.provider || !accountForm.accountNumber) return;
     if (editingAccount === null) {
-      const added = addDonationAccount(accountForm);
+      const added = await addDonationAccount(accountForm);
       setAccounts(prev => [...prev, added]);
     } else {
-      updateDonationAccount({ ...accountForm, id: editingAccount });
-      setAccounts(getDonationAccounts());
+      await updateDonationAccount({ ...accountForm, id: editingAccount });
+      setAccounts(await getDonationAccounts());
     }
     setAccountForm({ accountName: "Iskaashi", provider: "", accountNumber: "", phone: "", notes: "" });
     setManagingAccounts(false);
   }
 
-  function removeAccount(id) {
-    deleteDonationAccount(id);
+  async function removeAccount(id) {
+    await deleteDonationAccount(id);
     setAccounts(prev => prev.filter(a => a.id !== id));
   }
 
@@ -94,42 +102,63 @@ export default function Dashboard() {
   const yearDonors   = donors.filter(d => new Date(d.date).getFullYear() === selectedYear);
   const yearPayments = payments.filter(p => new Date(p.date).getFullYear() === selectedYear);
 
-  const totalCommitted = yearDonors.reduce((s, d) => s + d.committed, 0);
-  const totalPaid      = yearPayments.reduce((s, p) => s + p.amount, 0);
+  // The main dashboard tracks the Education Fund only — other charities
+  // (Ramadan, Ciidsiinta Agoonta, etc.) are shown separately below so their
+  // money never gets mixed into the Education Fund's totals.
+  const isEducation  = type => (type || 'EDUCATION') === 'EDUCATION';
+  const eduDonors    = yearDonors.filter(d => isEducation(d.type));
+  const eduPayments  = yearPayments.filter(p => isEducation(p.type));
+
+  const totalCommitted = eduDonors.reduce((s, d) => s + d.committed, 0);
+  const totalPaid      = eduPayments.reduce((s, p) => s + p.amount, 0);
   const pctCollected   = totalCommitted > 0 ? (totalPaid / totalCommitted) * 100 : 0;
   // Net in account = collected from donors minus what has been paid out to students
   const netInAccount   = totalPaid - (budgetSummary.disbursed || 0);
 
   // Payment type breakdown for selected year
   const typeBreakdown = Object.entries(
-    yearDonors.reduce((acc, d) => {
+    eduDonors.reduce((acc, d) => {
       acc[d.type] = (acc[d.type] || 0) + d.committed;
       return acc;
     }, {})
   ).map(([type, amount]) => ({ name: PAYMENT_TYPES[type] || type, value: amount }));
 
+  // Other charities — separate totals per fund, kept out of the Education Fund numbers above
+  const otherTypes = Object.keys(PAYMENT_TYPES).filter(k => k !== 'EDUCATION');
+  const otherBreakdown = otherTypes.map(type => {
+    const typeDonors   = yearDonors.filter(d => d.type === type);
+    const typePayments = yearPayments.filter(p => p.type === type);
+    return {
+      type,
+      name: PAYMENT_TYPES[type],
+      donors: typeDonors.length,
+      committed: typeDonors.reduce((s, d) => s + d.committed, 0),
+      collected: typePayments.reduce((s, p) => s + p.amount, 0),
+    };
+  });
+
   // Donor status breakdown for selected year
-  const fullyPaid = yearDonors.filter(d => d.paid >= d.committed && d.committed > 0).length;
-  const partial   = yearDonors.filter(d => d.paid > 0 && d.paid < d.committed).length;
-  const unpaid    = yearDonors.filter(d => d.paid === 0).length;
+  const fullyPaid = eduDonors.filter(d => d.paid >= d.committed && d.committed > 0).length;
+  const partial   = eduDonors.filter(d => d.paid > 0 && d.paid < d.committed).length;
+  const unpaid    = eduDonors.filter(d => d.paid === 0).length;
 
   // Cumulative monthly trend — donors registered, committed, and collected
   const isCurrentYear = selectedYear === thisYear;
   let cumDonors = 0, cumCommitted = 0, cumCollected = 0;
   const monthlyTrend = MONTH_NAMES.map((month, i) => {
-    const moDonors   = yearDonors.filter(d => new Date(d.date).getMonth() === i);
-    const moPayments = yearPayments.filter(p => new Date(p.date).getMonth() === i);
+    const moDonors   = eduDonors.filter(d => new Date(d.date).getMonth() === i);
+    const moPayments = eduPayments.filter(p => new Date(p.date).getMonth() === i);
     cumDonors    += moDonors.length;
     cumCommitted += moDonors.reduce((s, d) => s + (d.committed || 0), 0);
     cumCollected += moPayments.reduce((s, p) => s + p.amount, 0);
     return { month, donors: cumDonors, committed: cumCommitted, collected: cumCollected };
   }).filter((_, i) => !isCurrentYear || i <= new Date().getMonth());
 
-  const recentPayments = [...yearPayments]
+  const recentPayments = [...eduPayments]
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 5);
 
-  const pendingDonors = yearDonors
+  const pendingDonors = eduDonors
     .filter(d => d.paid < d.committed)
     .slice(0, 5);
 
@@ -176,7 +205,7 @@ export default function Dashboard() {
 
       {/* Stat cards — compact */}
       <div className="flex-shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <StatCard compact icon={Users}      label={t("total_donors_label")}    value={yearDonors.length}                      sub={t("reg_contributors")}                                    color="green" />
+        <StatCard compact icon={Users}      label={t("total_donors_label")}    value={eduDonors.length}                       sub={t("reg_contributors")}                                    color="green" />
         <StatCard compact icon={DollarSign} label={t("total_committed_label")} value={`$${totalCommitted.toLocaleString()}`}  sub={t("pledged_amount")}                                      color="blue" />
         <StatCard compact icon={TrendingUp} label={t("collected")}             value={`$${totalPaid.toLocaleString()}`}       sub={t("pct_of_committed", { pct: pctCollected.toFixed(0) })}  color="amber" trend={pctCollected} />
         <StatCard compact icon={CreditCard} label="Balance in Iskaashi Account" value={`$${netInAccount.toLocaleString()}`}  sub={budgetSummary.disbursed > 0 ? `after $${budgetSummary.disbursed.toLocaleString()} paid to students` : "no student payments yet"} color={netInAccount < 0 ? "red" : "green"} />
@@ -263,9 +292,9 @@ export default function Dashboard() {
                         type="number" min="0"
                         value={studentBudgetInput}
                         onChange={e => setStudentBudgetInput(e.target.value)}
-                        onKeyDown={e => {
+                        onKeyDown={async e => {
                           if (e.key === "Enter") {
-                            setStudentBudget(+studentBudgetInput || 0);
+                            await setStudentBudget(+studentBudgetInput || 0);
                             setEditingStudentBudget(false);
                           }
                           if (e.key === "Escape") setEditingStudentBudget(false);
@@ -273,7 +302,7 @@ export default function Dashboard() {
                         className="w-24 text-sm font-black text-violet-600 border-b border-violet-300 bg-transparent outline-none"
                         autoFocus
                       />
-                      <button onClick={() => { setStudentBudget(+studentBudgetInput || 0); setEditingStudentBudget(false); }}
+                      <button onClick={async () => { await setStudentBudget(+studentBudgetInput || 0); setEditingStudentBudget(false); }}
                         className="text-emerald-500 hover:text-emerald-600"><Save className="w-3 h-3" /></button>
                       <button onClick={() => setEditingStudentBudget(false)}
                         className="text-gray-400 hover:text-gray-600"><X className="w-3 h-3" /></button>
@@ -348,6 +377,38 @@ export default function Dashboard() {
           </div>
         );
       })()}
+
+      {/* ── Other Charities — separate from the Education Fund above ──── */}
+      <div className="flex-shrink-0 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-50">
+          <div className="w-6 h-6 bg-rose-50 rounded-lg flex items-center justify-center">
+            <DollarSign className="w-3.5 h-3.5 text-rose-500" />
+          </div>
+          <span className="text-xs font-bold text-gray-800">Other Charities</span>
+          <span className="text-[10px] text-gray-400">Ramadan, Ciidsiinta Agoonta & more — kept separate from the Education Fund</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
+          {otherBreakdown.map(item => (
+            <div key={item.type} className="px-4 py-3">
+              <p className="text-xs font-bold text-gray-700 mb-1.5">{item.name}</p>
+              <div className="flex items-center gap-4">
+                <div>
+                  <p className="text-[9px] text-gray-400 font-semibold">Committed</p>
+                  <p className="text-sm font-black text-amber-600">${item.committed.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] text-gray-400 font-semibold">Collected</p>
+                  <p className="text-sm font-black text-emerald-600">${item.collected.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] text-gray-400 font-semibold">Donors</p>
+                  <p className="text-sm font-black text-gray-700">{item.donors}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Donation Accounts — scrolling ticker */}
       <style>{`

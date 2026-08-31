@@ -21,10 +21,11 @@ export default function History() {
   const [staticHistory, setStaticHistory] = useState([]);
 
   useEffect(() => {
-    setDonors(getDonors());
-    setOrphans(getOrphans());
-    setPayments(getPayments());
-    setStaticHistory(getHistory());
+    async function load() {
+      const [d, o, p, h] = await Promise.all([getDonors(), getOrphans(), getPayments(), getHistory()]);
+      setDonors(d); setOrphans(o); setPayments(p); setStaticHistory(h);
+    }
+    load();
   }, []);
 
   // Build current year entry from live data

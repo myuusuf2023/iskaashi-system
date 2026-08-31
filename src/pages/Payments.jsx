@@ -28,14 +28,17 @@ export default function Payments() {
   const fileRef = useRef();
   const [importResult, setImportResult] = useState(null);
 
-  const reload = () => { setPayments(getPayments()); setDonors(getDonors()); };
+  const reload = async () => {
+    const [p, d] = await Promise.all([getPayments(), getDonors()]);
+    setPayments(p); setDonors(d);
+  };
   useEffect(() => { reload(); }, []);
 
   function handleImportExcel(e) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
       const wb    = XLSX.read(ev.target.result, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
 
@@ -73,8 +76,8 @@ export default function Payments() {
 
       const today    = new Date().toISOString().split("T")[0];
       const base     = Date.now();
-      let currentDonors = getDonors();
-      const currentPayments = getPayments();
+      let currentDonors = await getDonors();
+      const currentPayments = await getPayments();
       const newDonors   = [];
       const newPayments = [];
 
@@ -116,19 +119,12 @@ export default function Payments() {
 
       // Batch-save everything at once — no race conditions
       if (newDonors.length > 0) {
-        saveDonors([...currentDonors, ...newDonors]);
-        currentDonors = getDonors();
+        await saveDonors([...currentDonors, ...newDonors]);
+        currentDonors = await getDonors();
       }
 
-      // Save all payments and update each donor's paid total
-      savePayments([...currentPayments, ...newPayments]);
-      const updatedDonors = currentDonors.map(d => {
-        const total = newPayments
-          .filter(p => p.donorId === d.id)
-          .reduce((s, p) => s + p.amount, 0);
-        return total > 0 ? { ...d, paid: d.paid + total } : d;
-      });
-      saveDonors(updatedDonors);
+      // Save all payments — server reconciles donor paid totals
+      await savePayments([...currentPayments, ...newPayments]);
 
       setImportResult({ created: newPayments.length, skipped: rows.length - newPayments.length, filename: file.name });
       reload();
@@ -161,8 +157,8 @@ export default function Payments() {
     }
   }
 
-  function deleteSelected() {
-    selected.forEach(id => deletePayment(id));
+  async function deleteSelected() {
+    await Promise.all([...selected].map(id => deletePayment(id)));
     setSelected(new Set());
     setConfirmBulkDelete(false);
     reload();
@@ -179,15 +175,15 @@ export default function Payments() {
     }));
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    addPayment({ ...form, donorId: +form.donorId, amount: +form.amount });
+    await addPayment({ ...form, donorId: +form.donorId, amount: +form.amount });
     setShowModal(false);
     reload();
   }
 
-  function handleDelete(id) {
-    deletePayment(id);
+  async function handleDelete(id) {
+    await deletePayment(id);
     setConfirmDelete(null);
     reload();
   }

@@ -8,24 +8,28 @@ import {
 import {
   GraduationCap, Search, UserPlus, Pencil, Trash2, X, Save,
   Upload, Download, CheckCircle2, MapPin, School,
-  Users, DollarSign, ChevronRight, CreditCard, ImageDown
+  Users, DollarSign, ChevronRight, CreditCard, ImageDown, Wallet, AlertCircle
 } from "lucide-react";
 import {
   getOrphans, addOrphan, updateOrphan, deleteOrphan, importOrphans,
-  parseCSV, DISTRICTS, markStudentPaid, markStudentUnpaid, getBudgetSummary
+  parseCSV, DISTRICTS, getBudgetSummary,
+  getOrphanPayments, addOrphanPayment, deleteOrphanPayment,
+  QUARTER_OPTIONS, SEMESTER_OPTIONS, applicablePeriods
 } from "../data/store";
 import { useAuth } from "../context/AuthContext";
+import SomaliaMap from "../components/SomaliaMap";
 
 const COLORS = ["#10b981","#3b82f6","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#ec4899","#84cc16"];
 const SCHOOL_COLORS     = ["#3b82f6","#60a5fa","#1d4ed8","#2563eb","#93c5fd","#1e40af","#bfdbfe","#172554"];
 const UNIVERSITY_COLORS = ["#8b5cf6","#a78bfa","#6d28d9","#7c3aed","#c4b5fd","#5b21b6","#ddd6fe","#2e1065"];
 
 const ENROLLMENT_STATUSES = {
-  active:     { label: "Active",           color: "bg-emerald-100 text-emerald-700", dot: "bg-emerald-500" },
-  new:        { label: "New",              color: "bg-blue-100 text-blue-700",       dot: "bg-blue-500" },
-  assessment: { label: "Under Assessment", color: "bg-amber-100 text-amber-700",    dot: "bg-amber-500" },
-  dropout:    { label: "Dropout",          color: "bg-rose-100 text-rose-700",       dot: "bg-rose-500" },
-  family:     { label: "Family Sponsored", color: "bg-teal-100 text-teal-700",       dot: "bg-teal-500" },
+  active:     { label: "Active",              color: "bg-emerald-100 text-emerald-700", dot: "bg-emerald-500" },
+  new:        { label: "New",                 color: "bg-blue-100 text-blue-700",       dot: "bg-blue-500" },
+  assessment: { label: "Under Assessment",    color: "bg-amber-100 text-amber-700",    dot: "bg-amber-500" },
+  dropout:    { label: "Dropout",              color: "bg-rose-100 text-rose-700",       dot: "bg-rose-500" },
+  family:     { label: "Family Sponsored",     color: "bg-teal-100 text-teal-700",       dot: "bg-teal-500" },
+  government: { label: "Government Sponsored", color: "bg-indigo-100 text-indigo-700",   dot: "bg-indigo-500" },
 };
 
 const LEVELS = {
@@ -35,7 +39,7 @@ const LEVELS = {
 
 const EMPTY_FORM = {
   name: "", school: "", grade: "", district: "",
-  monthlySupport: "", threeMonthSupport: "",
+  monthlySupport: "", threeMonthSupport: "", period: "",
   guardian: "", phone: "", notes: "",
   enrollmentStatus: "active",
   level: "school",
@@ -77,10 +81,13 @@ export default function Orphans() {
   const [activeTab,     setActiveTab]     = useState("list"); // "list" | "analytics"
   const [analyticsLevel, setAnalyticsLevel] = useState("ALL"); // "ALL" | "school" | "university"
   const fileRef         = useRef();
-  const [budgetSummary, setBudgetSummaryState] = useState(() => getBudgetSummary());
-  const refreshBudget   = () => setBudgetSummaryState(getBudgetSummary());
+  const [budgetSummary, setBudgetSummaryState] = useState({ total: 0, disbursed: 0, remaining: 0, needed: 0, shortfall: 0, paidCount: 0, totalStudents: 0, status: "unset" });
+  const refreshBudget   = async () => setBudgetSummaryState(await getBudgetSummary());
+  const [orphanPayments, setOrphanPayments] = useState([]);
+  const [payModal, setPayModal] = useState(null); // orphan being paid, or null
+  const [payForm,  setPayForm]  = useState({ periods: [], amount: "", date: "", notes: "" });
+  const [payError, setPayError] = useState("");
   const refCoverage     = useRef();
-  const refDistrict     = useRef();
   const refEnrollment   = useRef();
   const refFundSummary  = useRef();
   const refInstitution  = useRef();
@@ -95,8 +102,8 @@ export default function Orphans() {
     link.click();
   }
 
-  const reload = () => {
-    const all = getOrphans();
+  const reload = async () => {
+    const all = await getOrphans();
     const seen = new Set();
     setOrphans(all.filter(o => {
       const key = (o.name || "").toLowerCase().trim();
@@ -104,8 +111,74 @@ export default function Orphans() {
       seen.add(key);
       return true;
     }));
+    setOrphanPayments(await getOrphanPayments());
   };
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); refreshBudget(); }, []);
+
+  // ── quarterly/semester fee ledger helpers ────────────────────
+  function paidPeriodsFor(orphanId) {
+    return orphanPayments.filter(p => p.orphanId === orphanId).map(p => p.period);
+  }
+  function remainingPeriodsFor(o) {
+    const paid = paidPeriodsFor(o.id);
+    return applicablePeriods(o).filter(p => !paid.includes(p));
+  }
+
+  function openPayModal(o) {
+    setPayModal(o);
+    setPayError("");
+    setPayForm({
+      periods: [],
+      amount: o.threeMonthSupport || (o.monthlySupport || 0) * 3 || "",
+      date: new Date().toISOString().split("T")[0],
+      notes: "",
+    });
+  }
+  function closePayModal() {
+    setPayModal(null);
+    setPayError("");
+  }
+
+  function togglePeriodSelection(period) {
+    setPayForm(f => ({
+      ...f,
+      periods: f.periods.includes(period) ? f.periods.filter(p => p !== period) : [...f.periods, period],
+    }));
+  }
+
+  async function handleRecordPayment(e) {
+    e.preventDefault();
+    if (payForm.periods.length === 0) {
+      setPayError("Select at least one " + (payModal.level === "university" ? "semester" : "quarter") + " first.");
+      return;
+    }
+    const failures = [];
+    for (const period of payForm.periods) {
+      try {
+        await addOrphanPayment({
+          orphanId: payModal.id,
+          period,
+          amount: +payForm.amount || 0,
+          date: payForm.date,
+          notes: payForm.notes,
+        });
+      } catch (err) {
+        failures.push(`${period}: ${err.message || "failed"}`);
+      }
+    }
+    await reload();
+    await refreshBudget();
+    const updated = (await getOrphans()).find(o => o.id === payModal.id);
+    setPayModal(updated || payModal);
+    setPayForm(f => ({ ...f, periods: [], amount: payModal.threeMonthSupport || (payModal.monthlySupport || 0) * 3 || "" }));
+    setPayError(failures.length > 0 ? failures.join("; ") : "");
+  }
+
+  async function handleUndoPayment(id) {
+    await deleteOrphanPayment(id);
+    await reload();
+    await refreshBudget();
+  }
 
   // ── analytics pool — respects analyticsLevel switcher ────────
   const schoolStudents     = orphans.filter(o => !o.level || o.level === "school");
@@ -127,6 +200,7 @@ export default function Orphans() {
     assessment: aPool.filter(o => o.enrollmentStatus === "assessment").length,
     dropout:    aPool.filter(o => o.enrollmentStatus === "dropout").length,
     family:     aPool.filter(o => o.enrollmentStatus === "family").length,
+    government: aPool.filter(o => o.enrollmentStatus === "government").length,
   };
 
   const levelPool       = filterLevel === "ALL" ? orphans : orphans.filter(o => (o.level || "school") === filterLevel);
@@ -141,9 +215,7 @@ export default function Orphans() {
     monthly:  aPool.filter(o => o.school === s).reduce((sum, o) => sum + ((o.monthlySupport || 0) || (o.threeMonthSupport || 0)), 0),
   })).sort((a, b) => b.students - a.students);
 
-  const byDistrict = Array.from(new Set(aPool.map(o => o.district).filter(Boolean)))
-    .map(d => ({ name: d, value: aPool.filter(o => o.district === d).length }))
-    .filter(d => d.value > 0);
+
 
   const supportData = [
     { name: "With Monthly Support", value: withSupport,    fill: "#10b981" },
@@ -172,17 +244,11 @@ export default function Orphans() {
     if (allSelected) setSelected(prev => { const n = new Set(prev); filtered.forEach(o => n.delete(o.id)); return n; });
     else             setSelected(prev => { const n = new Set(prev); filtered.forEach(o => n.add(o.id));    return n; });
   }
-  function deleteSelected() {
-    selected.forEach(id => deleteOrphan(id));
+  async function deleteSelected() {
+    await Promise.all([...selected].map(id => deleteOrphan(id)));
     setSelected(new Set()); setConfirmBulkDelete(false); reload();
   }
 
-  function togglePaid(o) {
-    if (o.feePaid) markStudentUnpaid(o.id);
-    else markStudentPaid(o.id);
-    reload();
-    refreshBudget();
-  }
 
   function openAdd() {
     setEditing(null);
@@ -195,7 +261,7 @@ export default function Orphans() {
     setShowModal(true);
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     const monthly = +form.monthlySupport || 0;
     const data = {
@@ -204,8 +270,8 @@ export default function Orphans() {
       threeMonthSupport: +form.threeMonthSupport || monthly * 3,
       status: monthly > 0 ? "sponsored" : "unsponsored",
     };
-    if (editing) updateOrphan({ ...data, id: editing });
-    else addOrphan(data);
+    if (editing) await updateOrphan({ ...data, id: editing });
+    else await addOrphan(data);
     setShowModal(false); reload();
   }
 
@@ -214,7 +280,7 @@ export default function Orphans() {
     if (!file) return;
     const isExcel = /\.(xlsx|xls)$/i.test(file.name);
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
       let totalCount = 0;
 
       if (isExcel) {
@@ -243,7 +309,8 @@ export default function Orphans() {
               school:           "",
               grade:            "",
             }));
-            totalCount += importOrphans(dropRows.filter(r => r.name), contextLevel);
+            const { count } = await importOrphans(dropRows.filter(r => r.name), contextLevel);
+            totalCount += count;
             continue;
           }
 
@@ -274,10 +341,12 @@ export default function Orphans() {
             .filter(r => r.some(c => String(c).trim()))
             .map(r => Object.fromEntries(headers.map((h, i) => [h, String(r[i] ?? "").trim()])));
 
-          totalCount += importOrphans(rows.filter(r => r.name), contextLevel);
+          const { count } = await importOrphans(rows.filter(r => r.name), contextLevel);
+          totalCount += count;
         }
       } else {
-        totalCount = importOrphans(parseCSV(ev.target.result).filter(r => r.name), null);
+        const { count } = await importOrphans(parseCSV(ev.target.result).filter(r => r.name), null);
+        totalCount = count;
       }
 
       setImportResult({ count: totalCount, filename: file.name });
@@ -290,10 +359,10 @@ export default function Orphans() {
   function handleExport() {
     const rows = [
       ["No", "Full Name", "School", "Class/Grade", "District",
-       "Monthly ($)", "3-Month ($)", "Administrator", "Phone", "Notes"],
+       "Monthly ($)", "3-Month ($)", "Period", "Administrator", "Phone", "Notes"],
       ...orphans.map((o, i) => [
         i + 1, o.name, o.school || "", o.grade || "", o.district || "",
-        o.monthlySupport || 0, o.threeMonthSupport || 0,
+        o.monthlySupport || 0, o.threeMonthSupport || 0, o.period || "",
         o.guardian || "", o.phone || "", o.notes || ""
       ])
     ];
@@ -572,95 +641,15 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
               </div>
             </div>
 
-            {/* By district */}
-            <div ref={refDistrict} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col">
-              <div className="flex items-start justify-between mb-0.5">
-                <h3 className="font-bold text-gray-800 text-sm">Students by District</h3>
-                <button onClick={() => downloadChart(refDistrict, "district-breakdown")} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition flex-shrink-0" title="Download JPG"><ImageDown className="w-3.5 h-3.5"/></button>
-              </div>
-              <p className="text-xs text-gray-400 mb-3">Geographic distribution · {byDistrict.length} districts</p>
-              {byDistrict.length === 0 ? (
-                <p className="text-gray-400 text-xs text-center py-8">No district data yet</p>
-              ) : (
-                <div className="flex gap-3 flex-1">
-                  {/* Compact donut — no legend */}
-                  <div className="flex-shrink-0 flex items-center justify-center">
-                    <ResponsiveContainer width={110} height={110}>
-                      <PieChart>
-                        <Pie data={byDistrict} cx="50%" cy="50%"
-                          innerRadius={30} outerRadius={50}
-                          dataKey="value" startAngle={90} endAngle={-270}>
-                          {byDistrict.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                        </Pie>
-                        <Tooltip formatter={(v, n) => [`${v} students`, n]}
-                          contentStyle={{ borderRadius: 10, border: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.1)", fontSize: 11 }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {/* Ranked list */}
-                  <div className="flex-1 overflow-y-auto max-h-[200px] space-y-1.5 pr-1
-                    scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent">
-                    {[...byDistrict].sort((a, b) => b.value - a.value).map((d, i) => {
-                      const max = byDistrict.reduce((m, x) => Math.max(m, x.value), 0);
-                      const pct = Math.round(d.value / max * 100);
-                      return (
-                        <div key={d.name} className="flex items-center gap-2 group">
-                          <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                            style={{ background: COLORS[i % COLORS.length] }} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-center mb-0.5">
-                              <span className="text-[11px] font-semibold text-gray-600 truncate">{d.name}</span>
-                              <span className="text-[11px] font-black ml-2 flex-shrink-0"
-                                style={{ color: COLORS[i % COLORS.length] }}>{d.value}</span>
-                            </div>
-                            <div className="w-full bg-gray-100 rounded-full h-1.5">
-                              <div className="h-1.5 rounded-full transition-all duration-500"
-                                style={{ width: `${pct}%`, background: COLORS[i % COLORS.length] }} />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+            {/* Somalia Map — spans 2 columns */}
+            <div className="lg:col-span-2 rounded-2xl overflow-hidden shadow-sm">
+              <SomaliaMap orphans={aPool} />
             </div>
 
-            {/* Enrollment status */}
-            <div ref={refEnrollment} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 space-y-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-bold text-gray-800 text-sm">Enrollment Status</h3>
-                  <p className="text-xs text-gray-400">Student programme standing</p>
-                </div>
-                <button onClick={() => downloadChart(refEnrollment, "enrollment-status")} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition flex-shrink-0" title="Download JPG"><ImageDown className="w-3.5 h-3.5"/></button>
-              </div>
-              <div className="space-y-3">
-                {Object.entries(ENROLLMENT_STATUSES).map(([key, cfg]) => {
-                  const count = enrollmentCounts[key] || 0;
-                  const pct   = aPool.length > 0 ? Math.round(count / aPool.length * 100) : 0;
-                  return (
-                    <div key={key}>
-                      <div className="flex justify-between items-center mb-1">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                          <span className="text-xs font-semibold text-gray-600">{cfg.label}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-400">{pct}%</span>
-                          <span className={`text-xs font-black px-2 py-0.5 rounded-lg ${cfg.color}`}>{count}</span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-2">
-                        <div className={`${cfg.dot} h-2 rounded-full transition-all duration-500`}
-                          style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+          </div>{/* end 3-col grid */}
+
+          {/* Row 2 — Fund Summary + Enrollment Status side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
             {/* Fund summary — context-aware */}
             <div ref={refFundSummary} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 space-y-4">
@@ -736,8 +725,43 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                 </div>
               </div>
             </div>
-          </div>
 
+            {/* Enrollment Status — moved here next to Fund Summary */}
+            <div ref={refEnrollment} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 space-y-4">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="font-bold text-gray-800 text-sm">Enrollment Status</h3>
+                  <p className="text-xs text-gray-400">Student programme standing</p>
+                </div>
+                <button onClick={() => downloadChart(refEnrollment, "enrollment-status")} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition flex-shrink-0" title="Download JPG"><ImageDown className="w-3.5 h-3.5"/></button>
+              </div>
+              <div className="space-y-3">
+                {Object.entries(ENROLLMENT_STATUSES).map(([key, cfg]) => {
+                  const count = enrollmentCounts[key] || 0;
+                  const pct   = aPool.length > 0 ? Math.round(count / aPool.length * 100) : 0;
+                  return (
+                    <div key={key}>
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                          <span className="text-xs font-semibold text-gray-600">{cfg.label}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">{pct}%</span>
+                          <span className={`text-xs font-black px-2 py-0.5 rounded-lg ${cfg.color}`}>{count}</span>
+                        </div>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-2">
+                        <div className={`${cfg.dot} h-2 rounded-full transition-all duration-500`}
+                          style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>{/* end 2-col grid */}
 
           {/* Institution breakdown — dot-matrix + donut panel */}
           {bySchool.length > 0 && (
@@ -883,6 +907,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
           )}
 
           </div>{/* end refAllCharts */}
+
         </div>
       )}
 
@@ -1030,7 +1055,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
                     {isSuperAdmin && <th className="px-3 py-2.5"><input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-4 h-4 accent-rose-500 cursor-pointer" /></th>}
-                    {["No","Full Name","School","Grade","District","Monthly ($)","3-Month ($)","Administrator","Phone","Status",...(isAdmin?["Actions"]:[])].map(h => (
+                    {["No","Full Name","School","Grade","District","Monthly ($)","Quarterly ($)","Administrator","Phone","Status",...(isAdmin?["Actions"]:[])].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -1062,7 +1087,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                       <td className="px-3 py-3 text-gray-600 text-xs min-w-[110px]">{o.guardian || "—"}</td>
                       <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">{o.phone || "—"}</td>
                       <td className="px-3 py-3">{(() => { const cfg = ENROLLMENT_STATUSES[o.enrollmentStatus||"active"]||ENROLLMENT_STATUSES.active; return <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg ${cfg.color}`}><div className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`}/>{cfg.label}</span>; })()}</td>
-                      {isAdmin && <td className="px-3 py-3"><div className="flex gap-1"><button onClick={()=>printStudentId(o)} className="p-1.5 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-600 rounded-lg transition" title="Print ID Card"><CreditCard className="w-3.5 h-3.5"/></button><button onClick={()=>togglePaid(o)} className={`p-1.5 rounded-lg transition ${o.feePaid ? "bg-emerald-100 text-emerald-600 hover:bg-emerald-200" : "hover:bg-gray-100 text-gray-300 hover:text-emerald-500"}`} title={o.feePaid ? "Mark Unpaid" : "Mark Paid"}><CheckCircle2 className="w-3.5 h-3.5"/></button><button onClick={()=>openEdit(o)} className="p-1.5 hover:bg-blue-50 text-blue-400 hover:text-blue-600 rounded-lg transition"><Pencil className="w-3.5 h-3.5"/></button><button onClick={()=>setConfirmDelete(o.id)} className="p-1.5 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-lg transition"><Trash2 className="w-3.5 h-3.5"/></button></div></td>}
+                      {isAdmin && <td className="px-3 py-3"><div className="flex gap-1"><button onClick={()=>printStudentId(o)} className="p-1.5 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-600 rounded-lg transition" title="Print ID Card"><CreditCard className="w-3.5 h-3.5"/></button><button onClick={()=>openPayModal(o)} className={`p-1.5 rounded-lg transition ${o.feePaid ? "bg-emerald-100 text-emerald-600 hover:bg-emerald-200" : "hover:bg-gray-100 text-gray-300 hover:text-emerald-500"}`} title="Manage Payments"><Wallet className="w-3.5 h-3.5"/></button><button onClick={()=>openEdit(o)} className="p-1.5 hover:bg-blue-50 text-blue-400 hover:text-blue-600 rounded-lg transition"><Pencil className="w-3.5 h-3.5"/></button><button onClick={()=>setConfirmDelete(o.id)} className="p-1.5 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-lg transition"><Trash2 className="w-3.5 h-3.5"/></button></div></td>}
                     </tr>
                   ))}
                 </tbody>
@@ -1079,8 +1104,11 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
               if (n.includes("dhameeye") || n.includes("graduated"))  return { key: "graduated", label: "Graduated",        cls: "bg-emerald-50 text-emerald-700" };
               if (n.includes("wareegay") || o.enrollmentStatus === "family")
                                                                        return { key: "family",    label: "Family Sponsored", cls: "bg-teal-50 text-teal-700" };
+              if (o.enrollmentStatus === "government")
+                                                                       return { key: "government", label: "Government Sponsored", cls: "bg-indigo-50 text-indigo-700" };
               if (n.includes("dropout") || o.enrollmentStatus === "dropout")
                                                                        return { key: "dropout",   label: "Dropout",          cls: "bg-rose-50 text-rose-600" };
+              if (o.period) return { key: "enrolled", label: o.period, cls: "bg-blue-50 text-blue-700" };
               const sem = (o.grade || o.notes || "").match(/semester\s*\d+/i);
               if (sem) return { key: "enrolled", label: sem[0].replace(/semester/i, "Semester"), cls: "bg-blue-50 text-blue-700" };
               if (n.includes("hadda") || n.includes("enrolled"))       return { key: "enrolled",  label: "Enrolled",         cls: "bg-blue-50 text-blue-700" };
@@ -1154,7 +1182,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                             );
                           })()}
                           {/* Actions */}
-                          {isAdmin && <td className="px-3 py-3"><div className="flex gap-1"><button onClick={()=>printStudentId(o)} className="p-1.5 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-600 rounded-lg transition" title="Print ID Card"><CreditCard className="w-3.5 h-3.5"/></button><button onClick={()=>togglePaid(o)} className={`p-1.5 rounded-lg transition ${o.feePaid ? "bg-emerald-100 text-emerald-600 hover:bg-emerald-200" : "hover:bg-gray-100 text-gray-300 hover:text-emerald-500"}`} title={o.feePaid ? "Mark Unpaid" : "Mark Paid"}><CheckCircle2 className="w-3.5 h-3.5"/></button><button onClick={()=>openEdit(o)} className="p-1.5 hover:bg-violet-50 text-violet-400 hover:text-violet-600 rounded-lg transition"><Pencil className="w-3.5 h-3.5"/></button><button onClick={()=>setConfirmDelete(o.id)} className="p-1.5 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-lg transition"><Trash2 className="w-3.5 h-3.5"/></button></div></td>}
+                          {isAdmin && <td className="px-3 py-3"><div className="flex gap-1"><button onClick={()=>printStudentId(o)} className="p-1.5 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-600 rounded-lg transition" title="Print ID Card"><CreditCard className="w-3.5 h-3.5"/></button><button onClick={()=>openPayModal(o)} className={`p-1.5 rounded-lg transition ${o.feePaid ? "bg-emerald-100 text-emerald-600 hover:bg-emerald-200" : "hover:bg-gray-100 text-gray-300 hover:text-emerald-500"}`} title="Manage Payments"><Wallet className="w-3.5 h-3.5"/></button><button onClick={()=>openEdit(o)} className="p-1.5 hover:bg-violet-50 text-violet-400 hover:text-violet-600 rounded-lg transition"><Pencil className="w-3.5 h-3.5"/></button><button onClick={()=>setConfirmDelete(o.id)} className="p-1.5 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-lg transition"><Trash2 className="w-3.5 h-3.5"/></button></div></td>}
                         </tr>
                       );
                     })}
@@ -1355,7 +1383,21 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5">3-Month Support ($) <span className="text-gray-300 font-normal">auto</span></label>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5">
+                      {form.level === "university" ? "Semester" : "Quarter"}
+                    </label>
+                    <select value={form.period}
+                      onChange={e => setForm(f => ({ ...f, period: e.target.value }))}
+                      className="w-full border border-gray-200 bg-gray-50 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-300 focus:bg-white transition">
+                      <option value="">Select {form.level === "university" ? "semester" : "quarter"}…</option>
+                      {(form.level === "university" ? SEMESTER_OPTIONS : QUARTER_OPTIONS(form.year || new Date().getFullYear()))
+                        .map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5">
+                      {form.level === "university" ? "Semester Support ($)" : "Quarterly Support ($)"} <span className="text-gray-300 font-normal">auto</span>
+                    </label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">$</span>
                       <input type="number" min="0" value={form.threeMonthSupport}
@@ -1396,7 +1438,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                   </div>
                   <div className="text-center">
                     <p className="text-2xl font-black text-blue-700">${+form.threeMonthSupport || (+form.monthlySupport)*3}</p>
-                    <p className="text-[10px] text-blue-600 font-semibold">per quarter</p>
+                    <p className="text-[10px] text-blue-600 font-semibold">{form.level === "university" ? "per semester" : "per quarter"}</p>
                   </div>
                   <div className="text-center">
                     <p className="text-2xl font-black text-purple-700">${(+form.monthlySupport) * 12}</p>
@@ -1459,13 +1501,170 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
               <div className="flex gap-3 mt-6">
                 <button onClick={() => setConfirmDelete(null)}
                   className="flex-1 border border-gray-200 text-gray-600 py-3 rounded-2xl font-semibold text-sm hover:bg-gray-50 transition">Cancel</button>
-                <button onClick={() => { deleteOrphan(confirmDelete); setConfirmDelete(null); reload(); }}
+                <button onClick={async () => { await deleteOrphan(confirmDelete); setConfirmDelete(null); reload(); }}
                   className="flex-1 bg-rose-600 hover:bg-rose-700 text-white py-3 rounded-2xl font-bold text-sm shadow-lg active:scale-[0.98] transition-all">Delete</button>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Student Payments — quarterly/semester fee ledger */}
+      {payModal && (() => {
+        const periodLabel = payModal.level === "university" ? "Semester" : "Quarter";
+        const history      = orphanPayments
+          .filter(p => p.orphanId === payModal.id)
+          .sort((a, b) => new Date(b.date) - new Date(a.date));
+        const remaining    = remainingPeriodsFor(payModal);
+        const allPeriods   = applicablePeriods(payModal);
+        const paidPeriods  = paidPeriodsFor(payModal.id);
+
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-6 py-4 rounded-t-3xl relative">
+                <button onClick={closePayModal} className="absolute top-3.5 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-xl transition">
+                  <X className="w-4 h-4 text-white" />
+                </button>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center">
+                    <Wallet className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-white font-bold text-base leading-tight">Student Payments</h2>
+                    <p className="text-white/70 text-xs">{payModal.name} · {payModal.level === "university" ? "University" : "School"}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Balance context */}
+                <div className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-2.5 border border-gray-100 text-xs">
+                  <span className="text-gray-500 font-semibold">Available account balance</span>
+                  <span className={`font-black ${budgetSummary.status === "negative" ? "text-rose-600" : "text-emerald-700"}`}>
+                    ${budgetSummary.remaining.toLocaleString()}
+                  </span>
+                </div>
+
+                {/* Payment history */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Payment History</p>
+                  {history.length === 0 ? (
+                    <p className="text-gray-400 text-xs text-center py-4 bg-gray-50 rounded-2xl">No payments recorded yet.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {history.map(p => (
+                        <div key={p.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2 border border-gray-100">
+                          <div className="flex items-center gap-2">
+                            <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-lg">{p.period}</span>
+                            <span className="text-gray-400 text-[11px]">{p.date}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-emerald-600 text-sm">${p.amount.toLocaleString()}</span>
+                            {isAdmin && (
+                              <button onClick={() => handleUndoPayment(p.id)} title="Undo payment"
+                                className="p-1 hover:bg-rose-50 text-rose-400 rounded-lg transition">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Remaining unpaid periods */}
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">
+                    {periodLabel}s ({paidPeriods.length}/{allPeriods.length} paid)
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {allPeriods.map(period => (
+                      <span key={period} className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${
+                        paidPeriods.includes(period) ? "bg-emerald-100 text-emerald-700" : "bg-rose-50 text-rose-500"
+                      }`}>
+                        {period}{paidPeriods.includes(period) ? " ✓" : ""}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Record new payment */}
+                {isAdmin && (remaining.length > 0 ? (
+                  <form onSubmit={handleRecordPayment} className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 space-y-3">
+                    <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">Record New Payment</p>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                        {periodLabel}s <span className="text-gray-400 font-normal">(select one or more)</span>
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {remaining.map(period => {
+                          const isSelected = payForm.periods.includes(period);
+                          return (
+                            <button key={period} type="button" onClick={() => togglePeriodSelection(period)}
+                              className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border-2 transition ${
+                                isSelected
+                                  ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
+                                  : "bg-white border-gray-200 text-gray-600 hover:border-emerald-300"
+                              }`}>
+                              {period}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Amount per {periodLabel.toLowerCase()} ($)</label>
+                        <input required type="number" min="0" value={payForm.amount}
+                          onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
+                          className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-300 transition" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Date</label>
+                        <input required type="date" value={payForm.date}
+                          onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))}
+                          className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-300 transition" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Notes</label>
+                        <input value={payForm.notes}
+                          onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))}
+                          className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-300 transition" />
+                      </div>
+                    </div>
+
+                    {payForm.periods.length > 0 && (
+                      <div className="flex items-center justify-between text-xs bg-white rounded-xl px-3 py-2 border border-emerald-200">
+                        <span className="text-gray-500 font-semibold">{payForm.periods.length} {periodLabel.toLowerCase()}{payForm.periods.length > 1 ? "s" : ""} selected</span>
+                        <span className="font-black text-emerald-700">Total: ${((+payForm.amount || 0) * payForm.periods.length).toLocaleString()}</span>
+                      </div>
+                    )}
+
+                    {payError && (
+                      <div className="flex items-center gap-1.5 text-rose-600 text-xs font-semibold">
+                        <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {payError}
+                      </div>
+                    )}
+                    <button type="submit" disabled={payForm.periods.length === 0}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-md active:scale-[0.98] transition-all">
+                      <Save className="w-4 h-4" />
+                      {payForm.periods.length > 1 ? `Record ${payForm.periods.length} Payments` : "Record Payment"}
+                    </button>
+                  </form>
+                ) : (
+                  <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3 text-emerald-700 text-xs font-bold">
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> All {periodLabel.toLowerCase()}s paid.
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
