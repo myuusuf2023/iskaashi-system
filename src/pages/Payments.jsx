@@ -19,6 +19,7 @@ export default function Payments() {
   const [payments, setPayments] = useState([]);
   const [donors, setDonors]     = useState([]);
   const [search, setSearch]     = useState("");
+  const [filterType, setFilterType] = useState("ALL");
   const [showModal, setShowModal] = useState(false);
   const [form, setForm]         = useState(EMPTY_FORM);
   const [confirmDelete, setConfirmDelete]         = useState(null);
@@ -133,10 +134,15 @@ export default function Payments() {
     e.target.value = "";
   }
 
-  const filtered = payments.filter(p =>
-    p.donorName.toLowerCase().includes(search.toLowerCase()) ||
-    (p.ref || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = payments.filter(p => {
+    const q = search.toLowerCase();
+    const matchSearch = !q ||
+      p.donorName.toLowerCase().includes(q) ||
+      (p.ref || "").toLowerCase().includes(q) ||
+      (PAYMENT_TYPES[p.type] || p.type || "").toLowerCase().includes(q);
+    const matchType = filterType === "ALL" || p.type === filterType;
+    return matchSearch && matchType;
+  });
 
   const allFilteredSelected = filtered.length > 0 && filtered.every(p => selected.has(p.id));
   const someSelected        = selected.size > 0;
@@ -239,6 +245,11 @@ export default function Payments() {
                 className="bg-transparent text-sm outline-none w-full"
               />
             </div>
+            <select value={filterType} onChange={e => setFilterType(e.target.value)}
+              className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-600 outline-none flex-shrink-0">
+              <option value="ALL">All Charities</option>
+              {Object.entries(PAYMENT_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
             {isSuperAdmin && someSelected && (
               <button onClick={() => setConfirmBulkDelete(true)}
                 className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs font-semibold shadow transition flex-shrink-0">
