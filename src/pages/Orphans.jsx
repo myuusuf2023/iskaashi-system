@@ -257,7 +257,7 @@ export default function Orphans() {
   }
   function openEdit(o) {
     setEditing(o.id);
-    setForm({ ...EMPTY_FORM, ...o });
+    setForm({ ...EMPTY_FORM, ...o, age: o.age || "" });
     setShowModal(true);
   }
 
