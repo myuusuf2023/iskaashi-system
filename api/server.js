@@ -340,13 +340,14 @@ app.post('/api/orphans/import', (req, res) => {
       const explicitLevel = (r.level || '').toLowerCase();
       const level = contextLevel ||
         (explicitLevel.includes('uni') ? 'university' : explicitLevel.includes('school') ? 'school' : 'school');
+      const monthlySupport = +r.monthlysupport || +r.monthly_support || 0;
+      const threeMonthSupport = +r.threemonthsupport || +r.three_month_support || +r.payment_per_semester || +r.persemester || (monthlySupport * 3) || 0;
       insert.run({
         id: Date.now() + i, studentId: `${prefix}${String(idCounter++).padStart(4, '0')}`,
         name: r.name || '', school: r.school || '',
         grade: r.grade || r.class || r.faculty || '',
         district: r.district || r.neighborhood || '',
-        monthlySupport: +r.monthlysupport || +r.monthly_support || 0,
-        threeMonthSupport: +r.threemonthsupport || +r.three_month_support || +r.payment_per_semester || +r.persemester || 0,
+        monthlySupport, threeMonthSupport,
         guardian: r.guardian || r.administrator || r.coordinator || '',
         phone: r.phone || '', notes: rawStatus,
         enrollmentStatus: parseEnrollmentStatus(rawStatus), level,
