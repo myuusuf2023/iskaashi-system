@@ -8,12 +8,13 @@ import {
 import {
   GraduationCap, Search, UserPlus, Pencil, Trash2, X, Save,
   Upload, Download, CheckCircle2, MapPin, School,
-  Users, DollarSign, ChevronRight, CreditCard, ImageDown, Wallet, AlertCircle
+  Users, DollarSign, ChevronRight, CreditCard, ImageDown, Wallet, AlertCircle, Gift, Baby
 } from "lucide-react";
 import {
   getOrphans, addOrphan, updateOrphan, deleteOrphan, importOrphans,
   parseCSV, DISTRICTS, getBudgetSummary,
   getOrphanPayments, addOrphanPayment, deleteOrphanPayment,
+  getOrphanSupport, addOrphanSupport, deleteOrphanSupport, SUPPORT_TYPES, effectiveAge,
   QUARTER_OPTIONS, SEMESTER_OPTIONS, applicablePeriods
 } from "../data/store";
 import { useAuth } from "../context/AuthContext";
@@ -43,9 +44,11 @@ const EMPTY_FORM = {
   guardian: "", phone: "", notes: "",
   enrollmentStatus: "active",
   level: "school",
-  age: "", gender: "male", donorId: null, status: "unsponsored",
+  age: "", dob: "", gender: "male", donorId: null, status: "unsponsored",
   year: new Date().getFullYear()
 };
+
+const UNDER16_AGE_LIMIT = 16;
 
 // ─── Mini stat card ───────────────────────────────────────────
 function KPI({ icon: Icon, label, value, sub, color, bg }) {
@@ -78,7 +81,7 @@ export default function Orphans() {
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [selected,   setSelected]   = useState(new Set());
   const [importResult, setImportResult] = useState(null);
-  const [activeTab,     setActiveTab]     = useState("list"); // "list" | "analytics"
+  const [activeTab,     setActiveTab]     = useState("list"); // "list" | "analytics" | "under16"
   const [analyticsLevel, setAnalyticsLevel] = useState("ALL"); // "ALL" | "school" | "university"
   const fileRef         = useRef();
   const [budgetSummary, setBudgetSummaryState] = useState({ total: 0, disbursed: 0, remaining: 0, needed: 0, shortfall: 0, paidCount: 0, totalStudents: 0, status: "unset" });
@@ -87,6 +90,11 @@ export default function Orphans() {
   const [payModal, setPayModal] = useState(null); // orphan being paid, or null
   const [payForm,  setPayForm]  = useState({ periods: [], amount: "", date: "", notes: "" });
   const [payError, setPayError] = useState("");
+
+  const [orphanSupport, setOrphanSupport] = useState([]);
+  const [supportModal, setSupportModal] = useState(null); // orphan being logged, or null
+  const [supportForm,  setSupportForm]  = useState({ type: "EID_GIFT", date: "", amount: "", notes: "" });
+  const [under16Search, setUnder16Search] = useState("");
   const refCoverage     = useRef();
   const refEnrollment   = useRef();
   const refFundSummary  = useRef();
@@ -112,8 +120,41 @@ export default function Orphans() {
       return true;
     }));
     setOrphanPayments(await getOrphanPayments());
+    setOrphanSupport(await getOrphanSupport());
   };
   useEffect(() => { reload(); refreshBudget(); }, []);
+
+  // ── Under-16 support helpers ──────────────────────────────────
+  const under16Orphans = orphans.filter(o => {
+    const age = effectiveAge(o);
+    return age !== null && age < UNDER16_AGE_LIMIT;
+  });
+  const filteredUnder16 = under16Orphans.filter(o =>
+    !under16Search || o.name.toLowerCase().includes(under16Search.toLowerCase())
+  );
+  function supportHistoryFor(orphanId) {
+    return orphanSupport.filter(s => s.orphanId === orphanId).sort((a, b) => new Date(b.date) - new Date(a.date));
+  }
+  function openSupportModal(o) {
+    setSupportModal(o);
+    setSupportForm({ type: "EID_GIFT", date: new Date().toISOString().split("T")[0], amount: "", notes: "" });
+  }
+  async function handleLogSupport(e) {
+    e.preventDefault();
+    await addOrphanSupport({
+      orphanId: supportModal.id,
+      type: supportForm.type,
+      date: supportForm.date,
+      amount: +supportForm.amount || 0,
+      notes: supportForm.notes,
+    });
+    await reload();
+    setSupportForm(f => ({ ...f, amount: "", notes: "" }));
+  }
+  async function handleDeleteSupport(id) {
+    await deleteOrphanSupport(id);
+    await reload();
+  }
 
   // ── quarterly/semester fee ledger helpers ────────────────────
   function paidPeriodsFor(orphanId) {
@@ -548,7 +589,7 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
         <div className="flex gap-2">
           {/* Tab switcher */}
           <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
-            {[["list","List"], ["analytics","Analytics"]].map(([tab, label]) => (
+            {[["list","List"], ["analytics","Analytics"], ["under16", `Under-16 (${under16Orphans.length})`]].map(([tab, label]) => (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                   activeTab === tab ? "bg-white text-gray-800 shadow" : "text-gray-500 hover:text-gray-700"
@@ -1199,6 +1240,99 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
         </div>
       )}
 
+      {/* ── Under-16 Support tab ─────────────────────────────── */}
+      {activeTab === "under16" && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-4 py-3 bg-gradient-to-r from-pink-50 to-rose-50 border-b border-pink-100 flex items-start gap-3">
+            <Baby className="w-5 h-5 text-pink-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-gray-800">Under-16 Orphans Support</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Children below {UNDER16_AGE_LIMIT} identified for additional charitable assistance (Eid gifts, clothing, special support).
+                This is a classification of existing student records, not a separate registration — their School/University record stays unchanged,
+                and they age out automatically once they turn {UNDER16_AGE_LIMIT}.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4">
+            <KPI icon={Baby} label="Under 16" value={under16Orphans.length} sub="eligible children" color="text-pink-500" bg="bg-pink-50" />
+            <KPI icon={Gift} label="Received Support" value={under16Orphans.filter(o => supportHistoryFor(o.id).length > 0).length} sub="at least one item logged" color="text-emerald-500" bg="bg-emerald-50" />
+            <KPI icon={AlertCircle} label="No Support Yet" value={under16Orphans.filter(o => supportHistoryFor(o.id).length === 0).length} sub="not yet assisted" color="text-rose-500" bg="bg-rose-50" />
+            <KPI icon={DollarSign}
+              label="Total Given"
+              value={`$${orphanSupport.filter(s => under16Orphans.some(o => o.id === s.orphanId)).reduce((sum, s) => sum + (s.amount || 0), 0).toLocaleString()}`}
+              sub="value of assistance" color="text-violet-500" bg="bg-violet-50" />
+          </div>
+
+          <div className="px-4 pb-3">
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 max-w-sm">
+              <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <input value={under16Search} onChange={e => setUnder16Search(e.target.value)}
+                placeholder="Search by name…" className="bg-transparent text-sm outline-none w-full" />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  {["Child", "Age", "Date of Birth", "School", "Guardian", "Phone", "Support History", "Actions"].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredUnder16.length === 0 && (
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400 text-sm">No children under {UNDER16_AGE_LIMIT} found.</td></tr>
+                )}
+                {filteredUnder16.map(o => {
+                  const history = supportHistoryFor(o.id);
+                  const age = effectiveAge(o);
+                  return (
+                    <tr key={o.id} className="hover:bg-gray-50/70">
+                      <td className="px-3 py-3 min-w-[160px]">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-xl bg-pink-100 flex items-center justify-center flex-shrink-0">
+                            <span className="font-black text-[10px] text-pink-600">{o.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-semibold text-gray-800 text-xs truncate block">{o.name}</span>
+                            <span className="text-[9px] font-mono text-gray-400">{o.studentId || "—"}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3"><span className="bg-pink-50 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-lg whitespace-nowrap">{age} yrs</span></td>
+                      <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">{o.dob || "—"}</td>
+                      <td className="px-3 py-3 text-xs text-gray-600 max-w-[140px]"><span className="truncate block" title={o.school}>{o.school || "—"}</span></td>
+                      <td className="px-3 py-3 text-gray-600 text-xs min-w-[110px]">{o.guardian || "—"}</td>
+                      <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">{o.phone || "—"}</td>
+                      <td className="px-3 py-3">
+                        {history.length === 0 ? (
+                          <span className="text-gray-300 text-xs">None yet</span>
+                        ) : (
+                          <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-lg whitespace-nowrap">{history.length} item{history.length > 1 ? "s" : ""}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <button onClick={() => openSupportModal(o)}
+                          className="flex items-center gap-1 bg-pink-50 hover:bg-pink-100 text-pink-600 px-2.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap">
+                          <Gift className="w-3.5 h-3.5" /> Support
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="px-4 py-2.5 border-t border-gray-100">
+            <p className="text-xs text-gray-400">Showing {filteredUnder16.length} of {under16Orphans.length} children under {UNDER16_AGE_LIMIT}</p>
+          </div>
+        </div>
+      )}
+
       {/* ── Registration Modal ───────────────────────────────── */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1270,26 +1404,39 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-gray-500 mb-1.5">Age <span className="text-gray-300 font-normal">(optional)</span></label>
-                      <input type="number" min="3" max="25" value={form.age}
+                      <input type="number" min="0" max="25" value={form.age}
                         onChange={e => setForm(f => ({ ...f, age: e.target.value }))}
                         className="w-full border border-gray-200 bg-gray-50 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-rose-300 focus:bg-white transition"
                         placeholder="Age" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1.5">Gender</label>
-                      <div className="flex gap-2">
-                        {["male","female"].map(g => (
-                          <button key={g} type="button"
-                            onClick={() => setForm(f => ({ ...f, gender: g }))}
-                            className={`flex-1 py-2.5 rounded-xl text-xs font-bold border-2 transition ${
-                              form.gender === g
-                                ? "border-rose-500 bg-rose-50 text-rose-700"
-                                : "border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300"
-                            }`}>
-                            {g === "male" ? "👦 Male" : "👧 Female"}
-                          </button>
-                        ))}
-                      </div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1.5">
+                        Date of Birth <span className="text-gray-300 font-normal">(optional)</span>
+                      </label>
+                      <input type="date" value={form.dob}
+                        onChange={e => setForm(f => ({ ...f, dob: e.target.value }))}
+                        className="w-full border border-gray-200 bg-gray-50 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-rose-300 focus:bg-white transition" />
+                      {form.dob && (
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          Computed age: {effectiveAge({ dob: form.dob })} — used for Under-16 eligibility, kept accurate automatically
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5">Gender</label>
+                    <div className="flex gap-2">
+                      {["male","female"].map(g => (
+                        <button key={g} type="button"
+                          onClick={() => setForm(f => ({ ...f, gender: g }))}
+                          className={`flex-1 py-2.5 rounded-xl text-xs font-bold border-2 transition ${
+                            form.gender === g
+                              ? "border-rose-500 bg-rose-50 text-rose-700"
+                              : "border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300"
+                          }`}>
+                          {g === "male" ? "👦 Male" : "👧 Female"}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -1661,6 +1808,105 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                     <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> All {periodLabel.toLowerCase()}s paid.
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Under-16 Support History modal */}
+      {supportModal && (() => {
+        const history = supportHistoryFor(supportModal.id);
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+              <div className="bg-gradient-to-r from-pink-500 to-rose-600 px-6 py-4 rounded-t-3xl relative">
+                <button onClick={() => setSupportModal(null)} className="absolute top-3.5 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-xl transition">
+                  <X className="w-4 h-4 text-white" />
+                </button>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center">
+                    <Gift className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-white font-bold text-base leading-tight">Support History</h2>
+                    <p className="text-white/70 text-xs">{supportModal.name} · {effectiveAge(supportModal)} yrs old</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-2 gap-3 text-xs bg-gray-50 rounded-2xl p-3.5 border border-gray-100">
+                  <div><span className="text-gray-400 font-semibold">School</span><p className="text-gray-700 font-medium truncate">{supportModal.school || "—"}</p></div>
+                  <div><span className="text-gray-400 font-semibold">Guardian</span><p className="text-gray-700 font-medium truncate">{supportModal.guardian || "—"}</p></div>
+                  <div><span className="text-gray-400 font-semibold">Phone</span><p className="text-gray-700 font-medium">{supportModal.phone || "—"}</p></div>
+                  <div><span className="text-gray-400 font-semibold">District</span><p className="text-gray-700 font-medium">{supportModal.district || "—"}</p></div>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">History</p>
+                  {history.length === 0 ? (
+                    <p className="text-gray-400 text-xs text-center py-4 bg-gray-50 rounded-2xl">No assistance recorded yet.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {history.map(s => (
+                        <div key={s.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2 border border-gray-100">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-lg flex-shrink-0">{SUPPORT_TYPES[s.type] || s.type}</span>
+                            <span className="text-gray-400 text-[11px] flex-shrink-0">{s.date}</span>
+                            {s.notes && <span className="text-gray-400 text-[10px] italic truncate">— {s.notes}</span>}
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {s.amount > 0 && <span className="font-bold text-emerald-600 text-sm">${s.amount.toLocaleString()}</span>}
+                            {isAdmin && (
+                              <button onClick={() => handleDeleteSupport(s.id)} title="Remove entry"
+                                className="p-1 hover:bg-rose-50 text-rose-400 rounded-lg transition">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {isAdmin && (
+                  <form onSubmit={handleLogSupport} className="bg-pink-50 rounded-2xl p-4 border border-pink-100 space-y-3">
+                    <p className="text-[10px] font-bold text-pink-700 uppercase tracking-widest">Log New Support</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Type</label>
+                        <select value={supportForm.type} onChange={e => setSupportForm(f => ({ ...f, type: e.target.value }))}
+                          className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-300 transition">
+                          {Object.entries(SUPPORT_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Date</label>
+                        <input required type="date" value={supportForm.date}
+                          onChange={e => setSupportForm(f => ({ ...f, date: e.target.value }))}
+                          className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-300 transition" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Amount / Value ($) <span className="text-gray-300 font-normal">optional</span></label>
+                        <input type="number" min="0" value={supportForm.amount}
+                          onChange={e => setSupportForm(f => ({ ...f, amount: e.target.value }))}
+                          className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-300 transition" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Notes</label>
+                        <input value={supportForm.notes}
+                          onChange={e => setSupportForm(f => ({ ...f, notes: e.target.value }))}
+                          className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-300 transition" />
+                      </div>
+                    </div>
+                    <button type="submit"
+                      className="w-full bg-pink-600 hover:bg-pink-700 text-white py-2.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-md active:scale-[0.98] transition-all">
+                      <Save className="w-4 h-4" /> Log Support
+                    </button>
+                  </form>
+                )}
               </div>
             </div>
           </div>

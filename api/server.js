@@ -44,7 +44,8 @@ db.exec(`
     year INTEGER,
     feePaid INTEGER DEFAULT 0,
     paidAmount REAL DEFAULT 0, paidDate TEXT,
-    period TEXT DEFAULT ''
+    period TEXT DEFAULT '',
+    dob TEXT DEFAULT ''
   );
   CREATE TABLE IF NOT EXISTS orphan_payments (
     id INTEGER PRIMARY KEY,
@@ -55,6 +56,14 @@ db.exec(`
     notes TEXT DEFAULT ''
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_orphan_payments_unique ON orphan_payments(orphanId, period);
+  CREATE TABLE IF NOT EXISTS orphan_support (
+    id INTEGER PRIMARY KEY,
+    orphanId INTEGER NOT NULL,
+    type TEXT DEFAULT 'OTHER',
+    date TEXT,
+    amount REAL DEFAULT 0,
+    notes TEXT DEFAULT ''
+  );
   CREATE TABLE IF NOT EXISTS donation_accounts (
     id INTEGER PRIMARY KEY,
     accountName TEXT, provider TEXT,
@@ -68,9 +77,11 @@ db.exec(`
   );
 `);
 
-// Migrate: add 'period' column to orphans if it doesn't exist yet (older DBs)
-if (!db.prepare("PRAGMA table_info(orphans)").all().some(c => c.name === 'period')) {
-  db.exec("ALTER TABLE orphans ADD COLUMN period TEXT DEFAULT ''");
+// Migrate: add 'period'/'dob' columns to orphans if they don't exist yet (older DBs)
+{
+  const orphanCols = db.prepare("PRAGMA table_info(orphans)").all().map(c => c.name);
+  if (!orphanCols.includes('period')) db.exec("ALTER TABLE orphans ADD COLUMN period TEXT DEFAULT ''");
+  if (!orphanCols.includes('dob'))    db.exec("ALTER TABLE orphans ADD COLUMN dob TEXT DEFAULT ''");
 }
 
 // Seed default donation account
@@ -228,9 +239,9 @@ app.post('/api/orphans', (req, res) => {
   const studentId = o.studentId || nextStudentId(existing);
   db.prepare(`INSERT OR REPLACE INTO orphans
     (id,studentId,name,school,grade,district,monthlySupport,threeMonthSupport,
-     guardian,phone,notes,enrollmentStatus,level,donorId,status,age,gender,year,feePaid,paidAmount,paidDate,period)
+     guardian,phone,notes,enrollmentStatus,level,donorId,status,age,gender,year,feePaid,paidAmount,paidDate,period,dob)
     VALUES (@id,@studentId,@name,@school,@grade,@district,@monthlySupport,@threeMonthSupport,
-     @guardian,@phone,@notes,@enrollmentStatus,@level,@donorId,@status,@age,@gender,@year,@feePaid,@paidAmount,@paidDate,@period)`)
+     @guardian,@phone,@notes,@enrollmentStatus,@level,@donorId,@status,@age,@gender,@year,@feePaid,@paidAmount,@paidDate,@period,@dob)`)
     .run({ id, studentId, name: o.name || '', school: o.school || '',
            grade: o.grade || '', district: o.district || '',
            monthlySupport: o.monthlySupport || 0, threeMonthSupport: o.threeMonthSupport || 0,
@@ -240,7 +251,7 @@ app.post('/api/orphans', (req, res) => {
            age: o.age || 0, gender: o.gender || 'male',
            year: o.year || new Date().getFullYear(),
            feePaid: boolCol(o.feePaid), paidAmount: o.paidAmount || 0, paidDate: o.paidDate || null,
-           period: o.period || '' });
+           period: o.period || '', dob: o.dob || '' });
   res.json(toOrphan({ ...o, id, studentId }));
 });
 
@@ -250,14 +261,15 @@ app.put('/api/orphans/:id', (req, res) => {
     district=@district,monthlySupport=@monthlySupport,threeMonthSupport=@threeMonthSupport,
     guardian=@guardian,phone=@phone,notes=@notes,enrollmentStatus=@enrollmentStatus,level=@level,
     donorId=@donorId,status=@status,age=@age,gender=@gender,year=@year,
-    feePaid=@feePaid,paidAmount=@paidAmount,paidDate=@paidDate,period=@period WHERE id=@id`)
-    .run({ ...o, id: +req.params.id, feePaid: boolCol(o.feePaid), period: o.period || '' });
+    feePaid=@feePaid,paidAmount=@paidAmount,paidDate=@paidDate,period=@period,dob=@dob WHERE id=@id`)
+    .run({ ...o, id: +req.params.id, feePaid: boolCol(o.feePaid), period: o.period || '', dob: o.dob || '' });
   res.json({ ok: true });
 });
 
 app.delete('/api/orphans/:id', (req, res) => {
   db.prepare('DELETE FROM orphans WHERE id=?').run(+req.params.id);
   db.prepare('DELETE FROM orphan_payments WHERE orphanId=?').run(+req.params.id);
+  db.prepare('DELETE FROM orphan_support WHERE orphanId=?').run(+req.params.id);
   res.json({ ok: true });
 });
 
@@ -308,6 +320,31 @@ app.delete('/api/orphan-payments/:id', (req, res) => {
     db.prepare('DELETE FROM orphan_payments WHERE id=?').run(+req.params.id);
     syncOrphanPaidSummary(rec.orphanId);
   }
+  res.json({ ok: true });
+});
+
+// ─── Orphan Support (Eid gifts, clothing, special assistance for children) ─
+app.get('/api/orphan-support', (req, res) => {
+  res.json(db.prepare('SELECT * FROM orphan_support ORDER BY date DESC, id DESC').all());
+});
+
+app.post('/api/orphan-support', (req, res) => {
+  const p = req.body;
+  const orphanId = +p.orphanId;
+  if (!orphanId) return res.status(400).json({ error: 'orphanId is required' });
+  const orphan = db.prepare('SELECT id FROM orphans WHERE id=?').get(orphanId);
+  if (!orphan) return res.status(404).json({ error: 'Student not found' });
+
+  const id   = p.id || Date.now();
+  const date = p.date || new Date().toISOString().split('T')[0];
+  db.prepare(`INSERT INTO orphan_support (id,orphanId,type,date,amount,notes)
+    VALUES (@id,@orphanId,@type,@date,@amount,@notes)`)
+    .run({ id, orphanId, type: p.type || 'OTHER', date, amount: p.amount || 0, notes: p.notes || '' });
+  res.json({ id, orphanId, type: p.type || 'OTHER', date, amount: p.amount || 0, notes: p.notes || '' });
+});
+
+app.delete('/api/orphan-support/:id', (req, res) => {
+  db.prepare('DELETE FROM orphan_support WHERE id=?').run(+req.params.id);
   res.json({ ok: true });
 });
 
@@ -469,10 +506,10 @@ app.put('/api/bulk/orphans', (req, res) => {
     db.prepare('DELETE FROM orphans').run();
     const ins = db.prepare(`INSERT INTO orphans
       (id,studentId,name,school,grade,district,monthlySupport,threeMonthSupport,
-       guardian,phone,notes,enrollmentStatus,level,donorId,status,age,gender,year,feePaid,paidAmount,paidDate)
+       guardian,phone,notes,enrollmentStatus,level,donorId,status,age,gender,year,feePaid,paidAmount,paidDate,period,dob)
       VALUES (@id,@studentId,@name,@school,@grade,@district,@monthlySupport,@threeMonthSupport,
-       @guardian,@phone,@notes,@enrollmentStatus,@level,@donorId,@status,@age,@gender,@year,@feePaid,@paidAmount,@paidDate)`);
-    orphans.forEach(o => ins.run({ ...o, feePaid: boolCol(o.feePaid) }));
+       @guardian,@phone,@notes,@enrollmentStatus,@level,@donorId,@status,@age,@gender,@year,@feePaid,@paidAmount,@paidDate,@period,@dob)`);
+    orphans.forEach(o => ins.run({ ...o, feePaid: boolCol(o.feePaid), period: o.period || '', dob: o.dob || '' }));
   });
   replace(orphans);
   res.json({ ok: true });
@@ -511,6 +548,7 @@ app.post('/api/clear-all', (req, res) => {
   db.prepare('DELETE FROM payments').run();
   db.prepare('DELETE FROM orphans').run();
   db.prepare('DELETE FROM orphan_payments').run();
+  db.prepare('DELETE FROM orphan_support').run();
   db.prepare('DELETE FROM history').run();
   db.prepare('DELETE FROM donation_accounts').run();
   db.prepare("DELETE FROM settings WHERE key IN ('isk_target','isk_fund_budget') OR key LIKE 'isk_target_%'").run();

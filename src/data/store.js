@@ -47,6 +47,34 @@ export const getOrphanPayments   = ()  => get('/orphan-payments');
 export const addOrphanPayment    = p   => post('/orphan-payments', p);
 export const deleteOrphanPayment = id  => del(`/orphan-payments/${id}`);
 
+// ─── Orphan Support (Eid gifts, clothing, special assistance) ──
+export const SUPPORT_TYPES = {
+  EID_GIFT:  'Eid Gift',
+  CLOTHING:  'Clothing',
+  SPECIAL:   'Special Assistance',
+  OTHER:     'Other',
+};
+export const getOrphanSupport    = ()  => get('/orphan-support');
+export const addOrphanSupport    = p   => post('/orphan-support', p);
+export const deleteOrphanSupport = id  => del(`/orphan-support/${id}`);
+
+// Age is computed from date of birth when known (so eligibility for the
+// Under-16 list stays accurate automatically as time passes); falls back to
+// the manually-entered age field for older records that predate DOB capture.
+export function effectiveAge(o) {
+  if (o.dob) {
+    const dob = new Date(o.dob);
+    if (!isNaN(dob)) {
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+      return age;
+    }
+  }
+  return o.age > 0 ? o.age : null;
+}
+
 // ─── Donation Accounts ────────────────────────────────────────
 export const getDonationAccounts   = ()  => get('/donation-accounts');
 export const addDonationAccount    = a   => post('/donation-accounts', a);
