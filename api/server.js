@@ -513,7 +513,7 @@ app.post('/api/clear-all', (req, res) => {
   db.prepare('DELETE FROM orphan_payments').run();
   db.prepare('DELETE FROM history').run();
   db.prepare('DELETE FROM donation_accounts').run();
-  db.prepare("DELETE FROM settings WHERE key IN ('isk_target','isk_fund_budget')").run();
+  db.prepare("DELETE FROM settings WHERE key IN ('isk_target','isk_fund_budget') OR key LIKE 'isk_target_%'").run();
   db.prepare(`INSERT INTO donation_accounts (id,accountName,provider,accountNumber,phone,notes)
     VALUES (1,'Iskaashi','AMA','30294777','+252 615 57 47 77','')`).run();
   res.json({ ok: true });

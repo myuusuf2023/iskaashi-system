@@ -59,6 +59,12 @@ export const getTarget = () =>
     .then(v => v ?? { amount: 3350, label: 'Education Fund ' + new Date().getFullYear() });
 export const setTarget = t => post('/settings/isk_target', t);
 
+// ─── Per-charity fundraising goals (Ramadan, Ciidsiinta Agoonta, Other) ──
+export const getCharityTarget = type =>
+  get(`/settings/isk_target_${type}`)
+    .then(v => v ?? { amount: 0, label: (PAYMENT_TYPES[type] || type) + ' ' + new Date().getFullYear() });
+export const setCharityTarget = (type, t) => post(`/settings/isk_target_${type}`, t);
+
 export const getStudentBudget = () =>
   get('/settings/isk_student_budget').then(v => Number(v) || 0);
 export const setStudentBudget = amount => post('/settings/isk_student_budget', Number(amount) || 0);

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import StatCard from "../components/StatCard";
 import { getDonors, getPayments, PAYMENT_TYPES, getTarget, setTarget,
+         getCharityTarget, setCharityTarget,
          getDonationAccounts, addDonationAccount, updateDonationAccount, deleteDonationAccount,
          getBudgetSummary, getStudentBudget, setStudentBudget } from "../data/store";
 import { useAuth } from "../context/AuthContext";
@@ -19,6 +20,8 @@ const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"];
 
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+const OTHER_TYPES = Object.keys(PAYMENT_TYPES).filter(k => k !== 'EDUCATION');
+
 export default function Dashboard() {
   const { isAdmin } = useAuth();
   const { t } = useLanguage();
@@ -27,6 +30,10 @@ export default function Dashboard() {
   const [goal, setGoal]         = useState({ amount: 3350, label: "Education Fund " + new Date().getFullYear() });
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalForm, setGoalForm]       = useState({ amount: "", label: "" });
+
+  const [otherGoals, setOtherGoals] = useState({});
+  const [editingOtherGoalType, setEditingOtherGoalType] = useState(null);
+  const [otherGoalForm, setOtherGoalForm] = useState({ amount: "", label: "" });
 
   const [accounts, setAccounts]           = useState([]);
   const [managingAccounts, setManagingAccounts] = useState(false);
@@ -43,9 +50,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     async function load() {
-      const [d, p, g, accs, budget, sb] = await Promise.all([
+      const [d, p, g, accs, budget, sb, otherGoalList] = await Promise.all([
         getDonors(), getPayments(), getTarget(),
         getDonationAccounts(), getBudgetSummary(), getStudentBudget(),
+        Promise.all(OTHER_TYPES.map(type => getCharityTarget(type))),
       ]);
       setDonors(d);
       setPayments(p);
@@ -53,6 +61,7 @@ export default function Dashboard() {
       setAccounts(accs);
       setBudgetSummary(budget);
       setStudentBudgetInput(String(sb || ""));
+      setOtherGoals(Object.fromEntries(OTHER_TYPES.map((type, i) => [type, otherGoalList[i]])));
     }
     load();
   }, []);
@@ -67,6 +76,21 @@ export default function Dashboard() {
     await setTarget(updated);
     setGoal(updated);
     setEditingGoal(false);
+  }
+
+  function openOtherGoalEdit(type) {
+    const current = otherGoals[type] || { amount: 0, label: PAYMENT_TYPES[type] };
+    setOtherGoalForm({ amount: current.amount, label: current.label });
+    setEditingOtherGoalType(type);
+  }
+
+  async function saveOtherGoal() {
+    const type = editingOtherGoalType;
+    const current = otherGoals[type] || { amount: 0, label: PAYMENT_TYPES[type] };
+    const updated = { amount: +otherGoalForm.amount || 0, label: otherGoalForm.label || current.label };
+    await setCharityTarget(type, updated);
+    setOtherGoals(g => ({ ...g, [type]: updated }));
+    setEditingOtherGoalType(null);
   }
 
   function openNewAccount() {
@@ -124,8 +148,7 @@ export default function Dashboard() {
   ).map(([type, amount]) => ({ name: PAYMENT_TYPES[type] || type, value: amount }));
 
   // Other charities — separate totals per fund, kept out of the Education Fund numbers above
-  const otherTypes = Object.keys(PAYMENT_TYPES).filter(k => k !== 'EDUCATION');
-  const otherBreakdown = otherTypes.map(type => {
+  const otherBreakdown = OTHER_TYPES.map(type => {
     const typeDonors   = yearDonors.filter(d => d.type === type);
     const typePayments = yearPayments.filter(p => p.type === type);
     return {
@@ -388,25 +411,57 @@ export default function Dashboard() {
           <span className="text-[10px] text-gray-400">Ramadan, Ciidsiinta Agoonta & more — kept separate from the Education Fund</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
-          {otherBreakdown.map(item => (
-            <div key={item.type} className="px-4 py-3">
-              <p className="text-xs font-bold text-gray-700 mb-1.5">{item.name}</p>
-              <div className="flex items-center gap-4">
-                <div>
-                  <p className="text-[9px] text-gray-400 font-semibold">Committed</p>
-                  <p className="text-sm font-black text-amber-600">${item.committed.toLocaleString()}</p>
+          {otherBreakdown.map(item => {
+            const itemGoal = otherGoals[item.type] || { amount: 0, label: item.name };
+            const itemPct  = itemGoal.amount > 0 ? Math.min(100, (item.collected / itemGoal.amount) * 100) : 0;
+            return (
+              <div key={item.type} className="px-4 py-3">
+                <p className="text-xs font-bold text-gray-700 mb-1.5">{item.name}</p>
+                <div className="flex items-center gap-4">
+                  <div>
+                    <p className="text-[9px] text-gray-400 font-semibold">Committed</p>
+                    <p className="text-sm font-black text-amber-600">${item.committed.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] text-gray-400 font-semibold">Collected</p>
+                    <p className="text-sm font-black text-emerald-600">${item.collected.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] text-gray-400 font-semibold">Donors</p>
+                    <p className="text-sm font-black text-gray-700">{item.donors}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[9px] text-gray-400 font-semibold">Collected</p>
-                  <p className="text-sm font-black text-emerald-600">${item.collected.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] text-gray-400 font-semibold">Donors</p>
-                  <p className="text-sm font-black text-gray-700">{item.donors}</p>
+
+                {/* Fundraising goal for this charity */}
+                <div className="mt-2.5 pt-2.5 border-t border-gray-50">
+                  {itemGoal.amount > 0 ? (
+                    <>
+                      <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                        <div className="h-1.5 rounded-full" style={{ width: `${itemPct}%`, background: "linear-gradient(90deg, #10b981, #34d399)" }} />
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-[9px] text-gray-400">${item.collected.toLocaleString()} / ${itemGoal.amount.toLocaleString()} ({itemPct.toFixed(0)}%)</span>
+                        {isAdmin && (
+                          <button onClick={() => openOtherGoalEdit(item.type)} className="text-gray-300 hover:text-emerald-500 transition flex-shrink-0">
+                            <Pencil className="w-2.5 h-2.5" />
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    isAdmin ? (
+                      <button onClick={() => openOtherGoalEdit(item.type)}
+                        className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 hover:text-emerald-700 transition">
+                        <Target className="w-2.5 h-2.5" /> Set Goal
+                      </button>
+                    ) : (
+                      <span className="text-[9px] text-gray-300">No goal set</span>
+                    )
+                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -585,6 +640,54 @@ export default function Dashboard() {
                 </button>
                 <button onClick={saveGoal}
                   className="flex-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white py-2.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg hover:shadow-amber-200 active:scale-[0.98] transition-all">
+                  <Save className="w-4 h-4" /> {t("save_goal_btn")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Other-Charity Goal Modal */}
+      {editingOtherGoalType && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between bg-gradient-to-r from-emerald-500 to-emerald-600 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-white" />
+                <p className="text-white font-bold text-sm">Set {PAYMENT_TYPES[editingOtherGoalType]} Goal</p>
+              </div>
+              <button onClick={() => setEditingOtherGoalType(null)} className="text-white/70 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-100 space-y-2">
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">{t("goal_label")}</label>
+                <input
+                  value={otherGoalForm.label}
+                  onChange={e => setOtherGoalForm(f => ({ ...f, label: e.target.value }))}
+                  className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-300 shadow-sm transition"
+                  placeholder={t("goal_label_ph", { year: new Date().getFullYear() })}
+                />
+              </div>
+              <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-100 space-y-2">
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">{t("target_amount_label")}</label>
+                <input
+                  type="number" min="0"
+                  value={otherGoalForm.amount}
+                  onChange={e => setOtherGoalForm(f => ({ ...f, amount: e.target.value }))}
+                  className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-300 shadow-sm transition"
+                  placeholder={t("target_amount_ph")}
+                />
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setEditingOtherGoalType(null)}
+                  className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-2xl font-semibold text-sm hover:bg-gray-50 transition">
+                  {t("cancel")}
+                </button>
+                <button onClick={saveOtherGoal}
+                  className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white py-2.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg hover:shadow-emerald-200 active:scale-[0.98] transition-all">
                   <Save className="w-4 h-4" /> {t("save_goal_btn")}
                 </button>
               </div>
