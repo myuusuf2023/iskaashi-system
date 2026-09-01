@@ -159,6 +159,10 @@ export default function Dashboard() {
       collected: typePayments.reduce((s, p) => s + p.amount, 0),
     };
   });
+  // Combined total across Ramadan + Ciidsiinta Agoonta + Other — e.g. $200 Ramadan + $300
+  // Ciidsiinta = $500 calculated together here, while each still tracks separately above.
+  const otherTotalCommitted = otherBreakdown.reduce((s, i) => s + i.committed, 0);
+  const otherTotalCollected = otherBreakdown.reduce((s, i) => s + i.collected, 0);
 
   // Donor status breakdown for selected year
   const fullyPaid = eduDonors.filter(d => d.paid >= d.committed && d.committed > 0).length;
@@ -409,6 +413,10 @@ export default function Dashboard() {
           </div>
           <span className="text-xs font-bold text-gray-800">Other Charities</span>
           <span className="text-[10px] text-gray-400">Ramadan, Ciidsiinta Agoonta & more — kept separate from the Education Fund</span>
+          <span className="ml-auto flex-shrink-0 text-[10px] font-semibold text-gray-500">
+            Combined: <span className="text-amber-600 font-black">${otherTotalCommitted.toLocaleString()}</span> committed ·{" "}
+            <span className="text-emerald-600 font-black">${otherTotalCollected.toLocaleString()}</span> collected
+          </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
           {otherBreakdown.map(item => {
