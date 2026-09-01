@@ -6,7 +6,7 @@ import {
 import { Download, TrendingUp, Users, DollarSign, Search, Filter, FileText } from "lucide-react";
 import {
   getDonors, getPayments, getOrphans, getOrphanPayments, getBudgetSummary,
-  PAYMENT_TYPES, LOCATIONS, applicablePeriods
+  PAYMENT_TYPES, LOCATIONS, applicablePeriods, getAcademicYears, quartersInYear
 } from "../data/store";
 import { useLanguage } from "../context/LanguageContext";
 
@@ -28,6 +28,23 @@ export default function Reports() {
   const [studentSearch,       setStudentSearch]       = useState("");
   const [studentLevelFilter,  setStudentLevelFilter]  = useState("all");  // all | school | university
   const [studentStatusFilter, setStudentStatusFilter] = useState("all"); // all | complete | partial | none
+  const [feeYear,    setFeeYear]    = useState("all"); // "all" | e.g. 2025
+  const [feeQuarter, setFeeQuarter] = useState("all"); // "all" | 1-4
+
+  const feeYearOptions    = getAcademicYears();
+  const feeQuarterOptions = feeYear === "all" ? [] : quartersInYear(+feeYear);
+
+  function setFeeYearAndReset(y) { setFeeYear(y); setFeeQuarter("all"); }
+
+  // Quarters are calendar-scoped and only apply to school students; university
+  // semesters aren't tied to a specific year, so they're always in scope.
+  function periodInScope(period, level) {
+    if (level === "university") return true;
+    if (feeYear === "all") return true;
+    if (!period.endsWith(" " + feeYear)) return false;
+    if (feeQuarter === "all") return true;
+    return period.startsWith(`Q${feeQuarter} `);
+  }
 
   useEffect(() => {
     async function load() {
@@ -39,14 +56,16 @@ export default function Reports() {
 
   // ── Student quarterly/semester fee status ─────────────────────
   const studentRows = orphans.map(o => {
-    const periods         = applicablePeriods(o);
-    const paidPeriods     = orphanPayments.filter(p => p.orphanId === o.id).map(p => p.period);
+    const level   = o.level || "school";
+    const periods = applicablePeriods(o).filter(p => periodInScope(p, level));
+    const paidPeriodsAll = orphanPayments.filter(p => p.orphanId === o.id).map(p => p.period);
+    const paidPeriods     = paidPeriodsAll.filter(p => periods.includes(p));
     const remainingPeriods = periods.filter(p => !paidPeriods.includes(p));
     const amountPaid      = orphanPayments
-      .filter(p => p.orphanId === o.id)
+      .filter(p => p.orphanId === o.id && periods.includes(p.period))
       .reduce((s, p) => s + (p.amount || 0), 0);
     return {
-      id: o.id, name: o.name, level: o.level || "school",
+      id: o.id, name: o.name, level,
       periods, totalPeriods: periods.length, paidCount: paidPeriods.length,
       remainingCount: remainingPeriods.length, remainingPeriods, paidPeriods, amountPaid,
     };
@@ -92,7 +111,8 @@ export default function Reports() {
     const blob = new Blob([csv], { type: "text/csv" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
-    a.href = url; a.download = `student-fee-report-${new Date().toISOString().split("T")[0]}.csv`; a.click();
+    const periodTag = feeYear === "all" ? "all-periods" : feeQuarter === "all" ? feeYear : `Q${feeQuarter}-${feeYear}`;
+    a.href = url; a.download = `student-fee-report-${periodTag}.csv`; a.click();
   }
 
   function exportStudentFeePDF() {
@@ -104,6 +124,7 @@ export default function Reports() {
       : studentStatusFilter === "complete" ? "Fully Paid"
       : studentStatusFilter === "partial"  ? "Partial"
       : "Not Started";
+    const periodLabelStr = feeYear === "all" ? "All Quarters" : feeQuarter === "all" ? `${feeYear} (All)` : `Q${feeQuarter} ${feeYear}`;
 
     const bar = (pct, color) =>
       `<div style="flex:1;background:#e2e8f0;border-radius:4px;height:7px;overflow:hidden"><div style="width:${Math.min(100, pct)}%;height:100%;background:${color};border-radius:4px"></div></div>`;
@@ -206,6 +227,7 @@ export default function Reports() {
     <div class="report-subtitle">Quarterly / Semester Fee Status — ${now.getFullYear()}</div>
     <div class="header-meta">
       <span class="meta-pill">📅 ${dateStr} · ${timeStr}</span>
+      <span class="meta-pill">🗓️ ${periodLabelStr}</span>
       <span class="meta-pill">🎓 ${levelLabel}</span>
       <span class="meta-pill">⚡ ${statusLabel}</span>
       <span class="meta-pill">👥 ${filteredStudentRows.length} Students</span>
@@ -1325,7 +1347,9 @@ export default function Reports() {
           <div>
             <h2 className="text-xl font-bold text-gray-800">Student Fee Payment Report</h2>
             <p className="text-sm text-gray-400">
-              Quarterly / semester fee status — showing {filteredStudentRows.length} of {orphans.length} students
+              {feeYear === "all" ? "All quarters" : feeQuarter === "all" ? `${feeYear} (all quarters)` : `Q${feeQuarter} ${feeYear}`}
+              {" "}— showing {filteredStudentRows.length} of {orphans.length} students
+              {feeYear !== "all" && <span className="text-gray-300"> · University semesters aren't affected by this filter</span>}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1350,6 +1374,22 @@ export default function Reports() {
             <Filter className="w-3.5 h-3.5" /> Filters
           </div>
           <div className="flex flex-wrap gap-4">
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Year</p>
+              <select value={feeYear} onChange={e => setFeeYearAndReset(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-600 outline-none">
+                <option value="all">All Years</option>
+                {feeYearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Quarter</p>
+              <select value={feeQuarter} onChange={e => setFeeQuarter(e.target.value)} disabled={feeYear === "all"}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-600 outline-none disabled:opacity-40 disabled:cursor-not-allowed">
+                <option value="all">All Quarters</option>
+                {feeQuarterOptions.map(q => <option key={q} value={q}>Q{q} {feeYear}</option>)}
+              </select>
+            </div>
             <div className="space-y-1.5">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Level</p>
               <div className="flex flex-wrap gap-1.5">

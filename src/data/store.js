@@ -149,12 +149,41 @@ export const LOCATIONS = {
   qurbajoog: 'Diaspora',
 };
 
-// School students are billed quarterly (Q1-Q4 of a given year); university
-// students are billed per semester across an 8-semester program.
-export const QUARTER_OPTIONS  = year => [1, 2, 3, 4].map(q => `Q${q} ${year}`);
+// School students are billed quarterly; university students are billed per
+// semester across an 8-semester program (unrelated to calendar years).
+//
+// Quarterly tracking is org-wide, not per-student — every school student
+// shares the same rolling timeline, which starts at Q2 2025 (our first
+// tracked quarter) and grows on its own every year without any code change,
+// since the upper bound is always "this calendar year."
+export const ACADEMIC_START_YEAR    = 2025;
+export const ACADEMIC_START_QUARTER = 2; // Q2 2025
+
+export function getAcademicYears(throughYear = new Date().getFullYear()) {
+  const years = [];
+  for (let y = ACADEMIC_START_YEAR; y <= throughYear; y++) years.push(y);
+  return years;
+}
+
+// Which quarters (1-4) exist for a given year — the start year only has Q2-Q4.
+export function quartersInYear(year) {
+  const startQ = +year === ACADEMIC_START_YEAR ? ACADEMIC_START_QUARTER : 1;
+  const qs = [];
+  for (let q = startQ; q <= 4; q++) qs.push(q);
+  return qs;
+}
+
+export const QUARTER_OPTIONS = year => quartersInYear(year).map(q => `Q${q} ${year}`);
 export const SEMESTER_OPTIONS = Array.from({ length: 8 }, (_, i) => `Semester ${i + 1}`);
+
+// Every quarter from Q2 2025 through the current year, across all years —
+// this is the full payable timeline for school students.
+export function allQuarterPeriods(throughYear = new Date().getFullYear()) {
+  return getAcademicYears(throughYear).flatMap(y => QUARTER_OPTIONS(y));
+}
+
 export const applicablePeriods = o =>
-  o.level === 'university' ? SEMESTER_OPTIONS : QUARTER_OPTIONS(o.year || new Date().getFullYear());
+  o.level === 'university' ? SEMESTER_OPTIONS : allQuarterPeriods();
 
 export const DISTRICTS = [
   'Abdicasis', 'Daru Salam', 'Dharkenley', 'Garasbaaleey',

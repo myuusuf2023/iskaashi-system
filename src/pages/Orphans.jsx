@@ -15,7 +15,7 @@ import {
   parseCSV, DISTRICTS, getBudgetSummary,
   getOrphanPayments, addOrphanPayment, deleteOrphanPayment,
   getOrphanSupport, addOrphanSupport, deleteOrphanSupport, SUPPORT_TYPES, effectiveAge,
-  QUARTER_OPTIONS, SEMESTER_OPTIONS, applicablePeriods
+  QUARTER_OPTIONS, SEMESTER_OPTIONS, applicablePeriods, getAcademicYears
 } from "../data/store";
 import { useAuth } from "../context/AuthContext";
 import SomaliaMap from "../components/SomaliaMap";
@@ -90,6 +90,7 @@ export default function Orphans() {
   const [payModal, setPayModal] = useState(null); // orphan being paid, or null
   const [payForm,  setPayForm]  = useState({ periods: [], amount: "", date: "", notes: "" });
   const [payError, setPayError] = useState("");
+  const [payYearFilter, setPayYearFilter] = useState(new Date().getFullYear());
 
   const [orphanSupport, setOrphanSupport] = useState([]);
   const [supportModal, setSupportModal] = useState(null); // orphan being logged, or null
@@ -168,6 +169,7 @@ export default function Orphans() {
   function openPayModal(o) {
     setPayModal(o);
     setPayError("");
+    setPayYearFilter(new Date().getFullYear());
     setPayForm({
       periods: [],
       amount: o.threeMonthSupport || (o.monthlySupport || 0) * 3 || "",
@@ -1659,12 +1661,18 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
 
       {/* Student Payments — quarterly/semester fee ledger */}
       {payModal && (() => {
-        const periodLabel = payModal.level === "university" ? "Semester" : "Quarter";
+        const isUni        = payModal.level === "university";
+        const periodLabel  = isUni ? "Semester" : "Quarter";
         const history      = orphanPayments
           .filter(p => p.orphanId === payModal.id)
           .sort((a, b) => new Date(b.date) - new Date(a.date));
-        const remaining    = remainingPeriodsFor(payModal);
-        const allPeriods   = applicablePeriods(payModal);
+        const allPeriods    = applicablePeriods(payModal);
+        // Quarters are org-wide and grow every year, so school students pick a
+        // Year first to keep the list manageable — university keeps its full
+        // 8-semester list since semesters aren't tied to a calendar year.
+        const yearOptions   = getAcademicYears();
+        const displayPeriods = isUni ? allPeriods : allPeriods.filter(p => p.endsWith(" " + payYearFilter));
+        const remaining      = remainingPeriodsFor(payModal).filter(p => isUni || p.endsWith(" " + payYearFilter));
         const paidPeriods  = paidPeriodsFor(payModal.id);
 
         return (
@@ -1724,11 +1732,19 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
 
                 {/* Remaining unpaid periods */}
                 <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">
-                    {periodLabel}s ({paidPeriods.length}/{allPeriods.length} paid)
-                  </p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                      {periodLabel}s ({paidPeriods.length}/{allPeriods.length} paid overall)
+                    </p>
+                    {!isUni && (
+                      <select value={payYearFilter} onChange={e => setPayYearFilter(+e.target.value)}
+                        className="text-[10px] font-bold border border-gray-200 bg-white rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-emerald-300">
+                        {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                      </select>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-1.5">
-                    {allPeriods.map(period => (
+                    {displayPeriods.map(period => (
                       <span key={period} className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${
                         paidPeriods.includes(period) ? "bg-emerald-100 text-emerald-700" : "bg-rose-50 text-rose-500"
                       }`}>
@@ -1805,7 +1821,8 @@ body{background:#c8d0e0;display:flex;align-items:center;justify-content:center;m
                   </form>
                 ) : (
                   <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3 text-emerald-700 text-xs font-bold">
-                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> All {periodLabel.toLowerCase()}s paid.
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    All {periodLabel.toLowerCase()}s{isUni ? "" : ` for ${payYearFilter}`} paid.
                   </div>
                 ))}
               </div>
